@@ -1,0 +1,38 @@
+# Go build output and test artifacts
+/persistent-rootfs-controller
+/persistent-rootfsd
+/rootfs-runtime-wrapper
+*.test
+*.prof
+*.coverprofile
+coverage.out
+
+# Distribution and local artifacts
+dist/*
+!dist/
+artifacts/
+
+# Dependency and editor files
+vendor/
+.DS_Store
+**/.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local development and Kubernetes credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.kubeconfig
+kubeconfig
+
+# Temporary worktrees and tool state
+.worktrees/
+.tmp/
+tmp/
