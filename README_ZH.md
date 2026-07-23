@@ -95,7 +95,7 @@ spec:
         claimName: rootpv-data
 ```
 
-更多配置和运维信息请参阅[部署指南](docs/user-guide/deployment.md)和 [Helm Chart 文档](charts/rootpv/README.md)。
+更多配置和运维信息请参阅[文档索引](docs/README.md)、[部署指南](docs/user-guide/deployment.md)和 [Helm Chart 文档](charts/rootpv/README.md)。
 
 ## 开发
 
