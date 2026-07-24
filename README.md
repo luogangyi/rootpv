@@ -95,7 +95,7 @@ spec:
         claimName: rootpv-data
 ```
 
-See [the deployment guide](docs/user-guide/deployment.md) and [the Helm chart](charts/rootpv/README.md) for configuration and operational details.
+See the [documentation index](docs/README.md), [deployment guide](docs/user-guide/deployment.md), and [Helm chart](charts/rootpv/README.md) for configuration and operational details.
 
 ## Development
 
