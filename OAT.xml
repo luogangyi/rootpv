@@ -19,6 +19,7 @@
                 <policyitem type="compatibility" name="MulanPSL-2.0" path=".*"/>
                 <policyitem type="license" name="MulanPSL-2.0" path=".*"/>
                 <policyitem type="copyright" name="Huawei Technologies Co., Ltd." path=".*" rule="may" group="defaultGroup" filefilter="copyrightPolicyFilter"/>
+                <policyitem type="copyright" name="OpenFuyao Contributors" path=".*" rule="may" group="defaultGroup" filefilter="copyrightPolicyFilter"/>
             </policy>
         </policylist>
 
