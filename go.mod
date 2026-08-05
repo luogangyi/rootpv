@@ -3,6 +3,8 @@ module gitcode.com/openFuyao/rootpv
 go 1.24.0
 
 require (
+	github.com/opencontainers/go-digest v1.0.0
+	golang.org/x/sys v0.40.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.33.1
 )
