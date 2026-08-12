@@ -1,0 +1,300 @@
+/*
+ * Copyright (c) 2026 OpenFuyao Contributors.
+ * RootPV is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ * http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+package node
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/BurntSushi/toml"
+	"gopkg.in/yaml.v3"
+
+	"gitcode.com/openFuyao/rootpv/internal/atomicfile"
+	"gitcode.com/openFuyao/rootpv/internal/config"
+)
+
+const runtimeAdapterRegistryV2 = "rootpv-runtime-adapters-v2"
+
+type RuntimeReconcileOptions struct {
+	HostRoot      string
+	WrapperBinary string
+	RegistryPath  string
+}
+
+type RuntimeReconcileResult struct {
+	Readiness map[string]string
+	Changed   bool
+}
+
+type localAdapterRegistryV2 struct {
+	FormatVersion     string                         `yaml:"formatVersion"`
+	CatalogGeneration int64                          `yaml:"catalogGeneration"`
+	Adapters          map[string]localAdapterEntryV2 `yaml:"adapters"`
+}
+
+type localAdapterEntryV2 struct {
+	SourceHandler      string `yaml:"sourceHandler"`
+	RootfsHandler      string `yaml:"rootpvHandler"`
+	RuntimeType        string `yaml:"runtimeType"`
+	DelegateBinary     string `yaml:"delegateBinary"`
+	ClusterDigest      string `yaml:"clusterDigest"`
+	NodeResolvedDigest string `yaml:"nodeResolvedDigest"`
+}
+
+// ReconcileRuntimeAdapters 从目录中的源 handler 克隆 RootPV shadow handler，仅替换其 BinaryName；
+// 原厂 handler 始终不被改写。成功后同时写入仅 root 可读的本地 registry，调用方才可重载 containerd。
+func ReconcileRuntimeAdapters(containerdConfig string, catalog config.RuntimeCatalog, opts RuntimeReconcileOptions) (RuntimeReconcileResult, error) {
+	if catalog.FormatVersion != config.RuntimeCatalogFormatVersion {
+		return RuntimeReconcileResult{}, fmt.Errorf("unsupported runtime catalog format %q", catalog.FormatVersion)
+	}
+	if opts.WrapperBinary == "" || opts.RegistryPath == "" {
+		return RuntimeReconcileResult{}, fmt.Errorf("wrapper binary and registry path are required")
+	}
+	data, err := os.ReadFile(containerdConfig)
+	if err != nil {
+		return RuntimeReconcileResult{}, err
+	}
+	var raw map[string]any
+	if _, err := toml.Decode(string(data), &raw); err != nil {
+		return RuntimeReconcileResult{}, fmt.Errorf("decode containerd config: %w", err)
+	}
+	// The pre-catalog configurator installed these two fixed handlers.  They
+	// are superseded by catalog-derived handlers (for example
+	// persistent-rootfs-nvidia-runc-v2), and retaining them leaves an obsolete
+	// annotation allowlist active after a namespace migration.
+	removeLegacyRuntimeHandlers(raw)
+	registry := localAdapterRegistryV2{FormatVersion: runtimeAdapterRegistryV2, CatalogGeneration: catalog.Generation, Adapters: map[string]localAdapterEntryV2{}}
+	result := RuntimeReconcileResult{Readiness: map[string]string{}}
+	for _, adapter := range catalog.Adapters {
+		entry, ok, err := reconcileCatalogAdapter(raw, adapter, opts)
+		if err != nil {
+			return RuntimeReconcileResult{}, err
+		}
+		if !ok {
+			continue
+		}
+		registry.Adapters[adapter.ID] = entry
+		result.Readiness[adapter.ID] = readinessValue(adapter.ClusterDigest)
+	}
+	configChanged, err := writeTOMLIfChanged(containerdConfig, data, raw)
+	if err != nil {
+		return RuntimeReconcileResult{}, err
+	}
+	registryData, err := yaml.Marshal(registry)
+	if err != nil {
+		return RuntimeReconcileResult{}, err
+	}
+	registryChanged, err := writeFileIfChanged(opts.RegistryPath, registryData, 0o600)
+	if err != nil {
+		return RuntimeReconcileResult{}, err
+	}
+	result.Changed = configChanged || registryChanged
+	return result, nil
+}
+
+func reconcileCatalogAdapter(raw map[string]any, adapter config.CatalogRuntimeAdapter, opts RuntimeReconcileOptions) (localAdapterEntryV2, bool, error) {
+	if adapter.RuntimeType != config.RuncV2RuntimeType {
+		return localAdapterEntryV2{}, false, nil
+	}
+	source := adapterSource(raw, adapter.SourceHandler)
+	if len(source) == 0 {
+		if adapter.SourceHandler != "runc" {
+			return localAdapterEntryV2{}, false, nil
+		}
+		source = map[string]any{"runtime_type": config.RuncV2RuntimeType}
+	}
+	if stringValue(source["runtime_type"]) != adapter.RuntimeType {
+		return localAdapterEntryV2{}, false, nil
+	}
+	delegate := adapterDelegate(source, adapter.SourceHandler, opts.HostRoot)
+	resolved, err := resolveSafeDelegate(delegate, RuntimeDiscoveryOptions{HostRoot: opts.HostRoot, WrapperPaths: []string{opts.WrapperBinary}}.withDefaults())
+	if err != nil {
+		return localAdapterEntryV2{}, false, nil
+	}
+	if err := installAdapterHandler(raw, adapter, source, opts); err != nil {
+		return localAdapterEntryV2{}, false, err
+	}
+	digest := sha256Hex([]byte(adapter.SourceHandler + "\x00" + adapter.RuntimeType + "\x00" + resolved))
+	return localAdapterEntryV2{SourceHandler: adapter.SourceHandler, RootfsHandler: adapter.RootfsHandler, RuntimeType: adapter.RuntimeType, DelegateBinary: resolved, ClusterDigest: adapter.ClusterDigest, NodeResolvedDigest: digest}, true, nil
+}
+
+func adapterSource(raw map[string]any, sourceHandler string) map[string]any {
+	for _, table := range criRuntimeTables(raw) {
+		if value, ok := mapValue(table["runtimes"])[sourceHandler]; ok {
+			return mapValue(value)
+		}
+	}
+	return nil
+}
+
+func adapterDelegate(source map[string]any, sourceHandler, hostRoot string) string {
+	delegate := stringValue(mapValue(source["options"])["BinaryName"])
+	if delegate != "" || sourceHandler != "runc" {
+		return delegate
+	}
+	for _, candidate := range (RuntimeDiscoveryOptions{HostRoot: hostRoot}).withDefaults().DefaultRuncCandidates {
+		if executable(hostPath(hostRoot, candidate)) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func installAdapterHandler(raw map[string]any, adapter config.CatalogRuntimeAdapter, source map[string]any, opts RuntimeReconcileOptions) error {
+	wrapperBinary, err := ensureAdapterWrapper(opts, adapter.ID)
+	if err != nil {
+		return err
+	}
+	for _, table := range criRuntimeTables(raw) {
+		runtimes := mapValue(table["runtimes"])
+		if _, exists := runtimes[adapter.SourceHandler]; !exists && adapter.SourceHandler != "runc" {
+			continue
+		}
+		clone := cloneMap(source)
+		clone["pod_annotations"] = appendStringValue(clone["pod_annotations"], "ecloud.com/*")
+		clone["container_annotations"] = appendStringValue(clone["container_annotations"], "ecloud.com/*")
+		options := mapValue(clone["options"])
+		options["BinaryName"] = wrapperBinary
+		clone["options"] = options
+		runtimes[adapter.RootfsHandler] = clone
+		table["runtimes"] = runtimes
+	}
+	return nil
+}
+
+func removeLegacyRuntimeHandlers(raw map[string]any) {
+	for _, table := range criRuntimeTables(raw) {
+		runtimes := mapValue(table["runtimes"])
+		delete(runtimes, "persistent-rootfs-runc")
+		delete(runtimes, "persistent-rootfs-nvidia")
+		table["runtimes"] = runtimes
+	}
+}
+
+func appendStringValue(value any, required string) []string {
+	seen := map[string]bool{}
+	var result []string
+	appendValue := func(value string) {
+		if value != "" && !seen[value] {
+			seen[value] = true
+			result = append(result, value)
+		}
+	}
+	switch values := value.(type) {
+	case []string:
+		for _, value := range values {
+			appendValue(value)
+		}
+	case []any:
+		for _, value := range values {
+			appendValue(stringValue(value))
+		}
+	default:
+		// 配置可能省略该字段或使用不支持的类型；忽略它并仅写入必需项。
+	}
+	appendValue(required)
+	return result
+}
+
+// ensureAdapterWrapper creates a generated, per-adapter alias to the single
+// wrapper binary. CRI does not pass its selected runtime handler into a
+// sandbox OCI spec, so the alias is the only immutable execution identity the
+// wrapper receives for sandbox create/delete operations.
+func ensureAdapterWrapper(opts RuntimeReconcileOptions, adapterID string) (string, error) {
+	if adapterID == "" {
+		return "", fmt.Errorf("runtime adapter ID is required")
+	}
+	alias := adapterWrapperBinary(opts.WrapperBinary, adapterID)
+	target := hostPath(opts.HostRoot, alias)
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return "", err
+	}
+	if info, err := os.Lstat(target); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			if existing, readErr := os.Readlink(target); readErr == nil && existing == filepath.Base(opts.WrapperBinary) {
+				return alias, nil
+			}
+		}
+		return "", fmt.Errorf("generated adapter wrapper %q already exists and is not managed", alias)
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	if err := os.Symlink(filepath.Base(opts.WrapperBinary), target); err != nil {
+		return "", err
+	}
+	return alias, nil
+}
+
+func adapterWrapperBinary(wrapperBinary, adapterID string) string {
+	return filepath.Join(filepath.Dir(wrapperBinary), "rootfs-runtime-wrapper-"+adapterID)
+}
+
+func cloneMap(source map[string]any) map[string]any {
+	result := make(map[string]any, len(source))
+	for key, value := range source {
+		switch typed := value.(type) {
+		case map[string]any:
+			result[key] = cloneMap(typed)
+		case []map[string]any:
+			copyValues := make([]map[string]any, 0, len(typed))
+			for _, item := range typed {
+				copyValues = append(copyValues, cloneMap(item))
+			}
+			result[key] = copyValues
+		default:
+			result[key] = value
+		}
+	}
+	return result
+}
+
+func writeTOMLIfChanged(path string, previous []byte, raw map[string]any) (bool, error) {
+	var encoded bytes.Buffer
+	if err := toml.NewEncoder(&encoded).Encode(raw); err != nil {
+		return false, err
+	}
+	if _, err := toml.Decode(encoded.String(), &map[string]any{}); err != nil {
+		return false, fmt.Errorf("validate rendered containerd config: %w", err)
+	}
+	if bytes.Equal(previous, encoded.Bytes()) {
+		return false, nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false, err
+	}
+	return true, writeFileAtomicMode(path, encoded.Bytes(), info.Mode().Perm())
+}
+
+func writeFileIfChanged(path string, data []byte, mode os.FileMode) (bool, error) {
+	if current, err := os.ReadFile(path); err == nil && bytes.Equal(current, data) {
+		return false, nil
+	}
+	return true, writeFileAtomicMode(path, data, mode)
+}
+
+func writeFileAtomicMode(path string, data []byte, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return atomicfile.Write(path+".rootpv.tmp", path, data, mode)
+}
+
+func readinessValue(digest string) string {
+	if len(digest) > len("sha256:")+16 {
+		return digest[len("sha256:") : len("sha256:")+16]
+	}
+	return digest
+}
