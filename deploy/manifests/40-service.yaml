@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: persistent-rootfs-webhook
+  namespace: rootpv-system
+  labels:
+    app.kubernetes.io/name: persistent-rootfs
+    app.kubernetes.io/part-of: rootpv
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: persistent-rootfs
+    app.kubernetes.io/component: controller
+  ports:
+  - name: https-webhook
+    port: 443
+    protocol: TCP
+    targetPort: webhook
+  - name: metrics
+    port: 8080
+    protocol: TCP
+    targetPort: metrics

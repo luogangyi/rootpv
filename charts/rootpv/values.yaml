@@ -1,0 +1,157 @@
+image:
+  repository: rootpv
+  tag: latest
+  pullPolicy: IfNotPresent
+
+names:
+  app: persistent-rootfs
+  controller: persistent-rootfs-controller
+  nodeAgent: persistent-rootfsd
+  webhookService: persistent-rootfs-webhook
+  webhookTLSSecret: persistent-rootfs-webhook-tls
+  configMap: persistent-rootfs-webhook-config
+  controllerServiceAccount: persistent-rootfs-controller
+  nodeServiceAccount: persistent-rootfs-node
+
+controller:
+  enabled: true
+  replicas: 2
+  webhookAddr: ":9443"
+  metricsAddr: ":8080"
+  runtimeClassMode: inject
+  podAnnotations: {}
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65532
+    capabilities:
+      drop:
+      - ALL
+  readinessProbe:
+    initialDelaySeconds: 2
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+  livenessProbe:
+    initialDelaySeconds: 10
+    periodSeconds: 20
+    timeoutSeconds: 2
+    failureThreshold: 3
+  pdb:
+    enabled: true
+    minAvailable: 1
+
+nodeAgent:
+  enabled: true
+  hostPID: true
+  metricsAddr: ":8080"
+  kubeletRoot: /var/lib/kubelet
+  rootfsdSocket: /run/persistent-rootfsd/rootfsd.sock
+  runtimeRoot: /run/rootpv/rootfs
+  overlayMode: flat-lowerdirs
+  containerdAddress: /run/containerd/containerd.sock
+  containerdNamespace: k8s.io
+  allowedOverlaySnapshotRoots:
+  - /var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots
+  nodeSelector:
+    ecloud.com/persistent-rootfs: "true"
+  tolerations:
+  - operator: Exists
+  resources: {}
+  readinessProbe:
+    initialDelaySeconds: 2
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+  livenessProbe:
+    initialDelaySeconds: 10
+    periodSeconds: 20
+    timeoutSeconds: 2
+    failureThreshold: 3
+  securityContext:
+    privileged: true
+    capabilities:
+      add:
+      - SYS_ADMIN
+      - DAC_READ_SEARCH
+      - FOWNER
+  installerSecurityContext:
+    privileged: true
+  runtimeConfigurator:
+    restartCommand: >-
+      if command -v nsenter >/dev/null 2>&1; then nsenter -t 1 -m -u -i -n -p -- sh -ec 'if command -v systemctl >/dev/null 2>&1; then systemctl restart containerd; else pids="$(pidof containerd 2>/dev/null || true)"; [ -n "$pids" ] && kill -HUP $pids; fi'; else pids="$(pidof containerd 2>/dev/null || true)"; [ -n "$pids" ] && kill -HUP $pids; fi
+  hostPaths:
+    kubelet: /var/lib/kubelet
+    containerdRun: /run/containerd
+    containerdLib: /var/lib/containerd
+    rootfsdRun: /run/persistent-rootfsd
+    runtimeRoot: /run/rootpv/rootfs
+    usrLocalBin: /usr/local/bin
+    usrLocalSbin: /usr/local/sbin
+    usrBin: /usr/bin
+    etcRootpv: /etc/rootpv
+    containerdEtc: /etc/containerd
+    proc: /proc
+    sys: /sys
+
+rbac:
+  create: true
+
+serviceAccounts:
+  create: true
+
+config:
+  storagePolicy:
+    allowStorageClasses:
+    - ""
+    - rootpv-local
+    denyStorageClasses:
+    - nfs
+    - nas
+    - efs
+    - cephfs
+    - glusterfs
+    requirePVCVolume: true
+    requireSubPathAnchor: true
+  rootfsd:
+    kubeletRoot: /host/var/lib/kubelet
+    containerdRunRoot: /host/run/containerd
+    containerdStateRoot: /host/var/lib/containerd
+    socketDir: /run/persistent-rootfsd
+    prepareTimeout: 30s
+    resolveTimeout: 30s
+    anchorMountRoot: /var/run/rootpv/rootfs-anchor
+
+runtimeAdapterDiscovery:
+  enabled: true
+  supportedRuntimeTypes:
+  - io.containerd.runc.v2
+  maxHandlersPerNode: 64
+
+webhook:
+  enabled: true
+  failurePolicy: Fail
+  timeoutSeconds: 10
+  reinvocationPolicy: IfNeeded
+  matchPolicy: Equivalent
+  certs:
+    autoGenerate: true
+    durationDays: 3650
+    caBundle: ""
+    existingSecret: ""
+  namespaceSelector:
+    matchExpressions:
+    - key: kubernetes.io/metadata.name
+      operator: NotIn
+      values:
+      - kube-system
+      - kube-public
+      - kube-node-lease
+      - rootpv-system
+  objectSelector:
+    matchLabels: {}

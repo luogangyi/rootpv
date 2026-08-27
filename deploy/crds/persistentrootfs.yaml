@@ -1,0 +1,166 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: persistentrootfses.ecloud.com
+spec:
+  group: ecloud.com
+  scope: Namespaced
+  names:
+    plural: persistentrootfses
+    singular: persistentrootfs
+    kind: PersistentRootfs
+    listKind: PersistentRootfsList
+    shortNames:
+    - prfs
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: Pod
+      type: string
+      jsonPath: .spec.podName
+    - name: Container
+      type: string
+      jsonPath: .spec.containerName
+    - name: Node
+      type: string
+      jsonPath: .spec.nodeName
+    - name: PVC
+      type: string
+      jsonPath: .spec.pvcName
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    schema:
+      openAPIV3Schema:
+        type: object
+        description: PersistentRootfs records internal state for PVC-backed container writable rootfs layers.
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - podName
+            - podUID
+            - containerName
+            - pvcName
+            - volumeName
+            - path
+            properties:
+              podName:
+                type: string
+              podUID:
+                type: string
+              nodeName:
+                type: string
+              containerName:
+                type: string
+              pvcName:
+                type: string
+              volumeName:
+                type: string
+              path:
+                type: string
+                pattern: ^[^/].*$
+              baseImagePolicy:
+                type: string
+                enum:
+                - Strict
+                - Reset
+                - Rebase
+                default: Strict
+              originalRuntimeClass:
+                type: string
+              effectiveRuntimeClass:
+                type: string
+              quota:
+                type: string
+                pattern: ^([0-9]+)(Ei|Pi|Ti|Gi|Mi|Ki|E|P|T|G|M|K)?$
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+                enum:
+                - Pending
+                - Preparing
+                - Prepared
+                - Running
+                - Degraded
+                - Failed
+                - Released
+              reason:
+                type: string
+              message:
+                type: string
+              currentImage:
+                type: string
+              currentImageID:
+                type: string
+              currentChainID:
+                type: string
+              pvcHostPath:
+                type: string
+              upperDir:
+                type: string
+              workDir:
+                type: string
+              metaDir:
+                type: string
+              pvcUsageBytes:
+                type: integer
+                format: int64
+                minimum: 0
+              lockHolder:
+                type: object
+                properties:
+                  podUID:
+                    type: string
+                  nodeName:
+                    type: string
+                  acquiredAt:
+                    type: string
+                    format: date-time
+                  heartbeatAt:
+                    type: string
+                    format: date-time
+              lastPreparedAt:
+                type: string
+                format: date-time
+              lastUsedAt:
+                type: string
+                format: date-time
+              conditions:
+                type: array
+                items:
+                  type: object
+                  required:
+                  - type
+                  - status
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                    reason:
+                      type: string
+                    message:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+                      format: date-time

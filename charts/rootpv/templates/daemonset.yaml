@@ -1,0 +1,206 @@
+{{- if .Values.nodeAgent.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "rootpv.nodeAgentName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+{{ include "rootpv.nodeAgentLabels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+{{ include "rootpv.nodeAgentSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+{{ include "rootpv.nodeAgentLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "rootpv.nodeServiceAccountName" . }}
+      hostPID: {{ .Values.nodeAgent.hostPID }}
+      nodeSelector:
+{{ toYaml .Values.nodeAgent.nodeSelector | nindent 8 }}
+      tolerations:
+{{ toYaml .Values.nodeAgent.tolerations | nindent 8 }}
+      initContainers:
+      - name: install-runtime-wrapper
+        image: {{ include "rootpv.image" . }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+        - /bin/sh
+        - -ec
+        - |
+          install -d -m 0755 /host/usr/local/bin /host/etc/rootpv
+          install -m 0755 /usr/local/bin/rootfs-runtime-wrapper /host/usr/local/bin/rootfs-runtime-wrapper
+          cat >/host/etc/rootpv/rootfs-runtime-wrapper.yaml <<EOF
+          rootfsdSocket: /run/persistent-rootfsd/rootfsd.sock
+          runtimeRoot: /run/rootpv/rootfs
+          overlayMode: {{ .Values.nodeAgent.overlayMode }}
+          containerdAddress: {{ .Values.nodeAgent.containerdAddress }}
+          containerdNamespace: {{ .Values.nodeAgent.containerdNamespace }}
+          allowedOverlaySnapshotRoots:
+          {{- range .Values.nodeAgent.allowedOverlaySnapshotRoots }}
+            - {{ . }}
+          {{- end }}
+          runtimeAdapterCutover: true
+          runtimeAdapterRegistry: /etc/rootpv/rootpv-runtime-adapters.yaml
+          EOF
+        securityContext:
+{{ toYaml .Values.nodeAgent.installerSecurityContext | nindent 10 }}
+        volumeMounts:
+        - name: host-usr-bin
+          mountPath: /host/usr/bin
+          readOnly: true
+        - name: host-usr-local-bin
+          mountPath: /host/usr/local/bin
+        - name: host-usr-local-sbin
+          mountPath: /host/usr/local/sbin
+          readOnly: true
+        - name: host-etc-rootpv
+          mountPath: /host/etc/rootpv
+      containers:
+      - name: persistent-rootfsd
+        image: {{ include "rootpv.image" . }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        args:
+        - --metrics-addr={{ .Values.nodeAgent.metricsAddr }}
+        - --kubelet-root={{ .Values.nodeAgent.kubeletRoot }}
+        - --rootfsd-socket={{ .Values.nodeAgent.rootfsdSocket }}
+        - --runtime-root={{ .Values.nodeAgent.runtimeRoot }}
+        {{- if .Values.runtimeAdapterDiscovery.enabled }}
+        - --runtime-adapter-discovery=true
+        - --containerd-config=/host/etc/containerd/config.toml
+        - --host-root=/host
+        - --runtime-adapter-registry=/host/etc/rootpv/rootpv-runtime-adapters.yaml
+        - {{ printf "--containerd-restart-command=%s" .Values.nodeAgent.runtimeConfigurator.restartCommand | quote }}
+        {{- end }}
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        ports:
+        - name: metrics
+          containerPort: 8080
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: metrics
+{{ toYaml .Values.nodeAgent.readinessProbe | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: metrics
+{{ toYaml .Values.nodeAgent.livenessProbe | nindent 10 }}
+        securityContext:
+{{ toYaml .Values.nodeAgent.securityContext | nindent 10 }}
+        {{- with .Values.nodeAgent.resources }}
+        resources:
+{{ toYaml . | nindent 10 }}
+        {{- end }}
+        volumeMounts:
+        - name: config
+          mountPath: /etc/persistent-rootfs
+          readOnly: true
+        - name: kubelet
+          mountPath: /var/lib/kubelet
+          mountPropagation: HostToContainer
+        - name: containerd-run
+          mountPath: /run/containerd
+        - name: containerd-lib
+          mountPath: /var/lib/containerd
+          mountPropagation: Bidirectional
+        - name: rootfsd-run
+          mountPath: /run/persistent-rootfsd
+          mountPropagation: Bidirectional
+        - name: runtime-root
+          mountPath: /run/rootpv/rootfs
+          mountPropagation: Bidirectional
+        - name: containerd-etc
+          mountPath: /etc/containerd
+        - name: host-root
+          mountPath: /host
+        - name: host-usr-bin
+          mountPath: /host/usr/bin
+          readOnly: true
+        - name: host-usr-local-bin
+          mountPath: /host/usr/local/bin
+        - name: host-usr-local-sbin
+          mountPath: /host/usr/local/sbin
+          readOnly: true
+        - name: host-proc
+          mountPath: /host/proc
+          readOnly: true
+        - name: host-sys
+          mountPath: /host/sys
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: {{ include "rootpv.configMapName" . }}
+          items:
+          - key: rootfsd.yaml
+            path: rootfsd.yaml
+          {{- if not .Values.runtimeAdapterDiscovery.enabled }}
+          - key: runtimeClassMapping.yaml
+            path: runtimeClassMapping.yaml
+          {{- end }}
+          - key: storagePolicy.yaml
+            path: storagePolicy.yaml
+      - name: kubelet
+        hostPath:
+          path: {{ .Values.nodeAgent.hostPaths.kubelet }}
+          type: Directory
+      - name: containerd-run
+        hostPath:
+          path: {{ .Values.nodeAgent.hostPaths.containerdRun }}
+          type: Directory
+      - name: containerd-lib
+        hostPath:
+          path: {{ .Values.nodeAgent.hostPaths.containerdLib }}
+          type: Directory
+      - name: rootfsd-run
+        hostPath:
+          path: {{ .Values.nodeAgent.hostPaths.rootfsdRun }}
+          type: DirectoryOrCreate
+      - name: runtime-root
+        hostPath:
+          path: {{ .Values.nodeAgent.hostPaths.runtimeRoot }}
+          type: DirectoryOrCreate
+      - name: host-usr-local-bin
+        hostPath:
+          path: {{ .Values.nodeAgent.hostPaths.usrLocalBin }}
+          type: DirectoryOrCreate
+      - name: host-usr-local-sbin
+        hostPath:
+          path: {{ .Values.nodeAgent.hostPaths.usrLocalSbin }}
+          type: DirectoryOrCreate
+      - name: host-usr-bin
+        hostPath:
+          path: {{ .Values.nodeAgent.hostPaths.usrBin }}
+          type: Directory
+      - name: host-etc-rootpv
+        hostPath:
+          path: {{ .Values.nodeAgent.hostPaths.etcRootpv }}
+          type: DirectoryOrCreate
+      - name: containerd-etc
+        hostPath:
+          path: {{ .Values.nodeAgent.hostPaths.containerdEtc }}
+          type: Directory
+      - name: host-proc
+        hostPath:
+          path: {{ .Values.nodeAgent.hostPaths.proc }}
+          type: Directory
+      - name: host-sys
+        hostPath:
+          path: {{ .Values.nodeAgent.hostPaths.sys }}
+          type: Directory
+      - name: host-root
+        hostPath:
+          path: /
+          type: Directory
+{{- end }}

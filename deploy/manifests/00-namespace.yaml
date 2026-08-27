@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rootpv-system
+  labels:
+    app.kubernetes.io/name: persistent-rootfs
+    app.kubernetes.io/part-of: rootpv
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-dev
+  labels:
+    app.kubernetes.io/part-of: rootpv
+    ecloud.com/persistent-rootfs-enabled: "true"

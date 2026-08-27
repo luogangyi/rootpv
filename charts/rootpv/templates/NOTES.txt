@@ -1,0 +1,15 @@
+RootPV has been installed into namespace {{ .Release.Namespace }}.
+
+Next steps:
+1. Label target nodes:
+   kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
+
+2. The chart configures RootPV runtime handlers on labeled nodes and uses the
+   native containerd overlayfs snapshotter.
+
+3. Wait for workloads:
+   kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "rootpv.controllerName" . }} --timeout=180s
+   kubectl -n {{ .Release.Namespace }} rollout status ds/{{ include "rootpv.nodeAgentName" . }} --timeout=180s
+
+4. Check RootPV-owned node capability labels:
+   kubectl get nodes --show-labels | grep ecloud.com/persistent-rootfs-ready

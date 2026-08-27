@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: persistent-rootfs-webhook-config
+  namespace: rootpv-system
+  labels:
+    app.kubernetes.io/name: persistent-rootfs
+    app.kubernetes.io/part-of: rootpv
+data:
+  runtimeClassMapping.yaml: |
+    defaultRootfsRuntimeClass: persistent-rootfs-runc
+    mappings:
+      exact:
+        "": persistent-rootfs-runc
+        runc: persistent-rootfs-runc
+        nvidia: persistent-rootfs-nvidia
+        ascend: persistent-rootfs-ascend
+        huawei-npu: persistent-rootfs-ascend
+        mthreads: persistent-rootfs-mthreads
+        rocm: persistent-rootfs-rocm
+      regex:
+        "^nvidia-.*$": persistent-rootfs-nvidia
+        "^ascend-.*$": persistent-rootfs-ascend
+        "^rocm-.*$": persistent-rootfs-rocm
+      resourceHints:
+        nvidia.com/gpu: persistent-rootfs-nvidia
+        huawei.com/Ascend910: persistent-rootfs-ascend
+        mthreads.com/gpu: persistent-rootfs-mthreads
+  storagePolicy.yaml: |
+    allowStorageClasses:
+    - ""
+    - rootpv-local
+    denyStorageClasses:
+    - nfs
+    - nas
+    - efs
+    - cephfs
+    - glusterfs
+    requirePVCVolume: true
+    requireSubPathAnchor: true
+  rootfsd.yaml: |
+    kubeletRoot: /host/var/lib/kubelet
+    containerdRunRoot: /host/run/containerd
+    containerdStateRoot: /host/var/lib/containerd
+    socketDir: /run/persistent-rootfsd
+    prepareTimeout: 30s
+    resolveTimeout: 30s
+    anchorMountRoot: /var/run/rootpv/rootfs-anchor
