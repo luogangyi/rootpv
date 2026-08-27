@@ -1,0 +1,6 @@
+.git
+dist/*
+!dist/containerd-v2.1.1+rootpv-linux-amd64
+!dist/containerd-v2.1.1+rootpv-linux-arm64
+*.test
+persistent-rootfsd
