@@ -1,0 +1,219 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: persistent-rootfsd
+  namespace: rootpv-system
+  labels:
+    app.kubernetes.io/name: persistent-rootfs
+    app.kubernetes.io/component: node-agent
+    app.kubernetes.io/part-of: rootpv
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: persistent-rootfs
+      app.kubernetes.io/component: node-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: persistent-rootfs
+        app.kubernetes.io/component: node-agent
+        app.kubernetes.io/part-of: rootpv
+    spec:
+      serviceAccountName: persistent-rootfs-node
+      hostPID: true
+      nodeSelector:
+        ecloud.com/persistent-rootfs: "true"
+      tolerations:
+      - operator: Exists
+      initContainers:
+      - name: install-runtime-wrapper
+        image: rootpv:latest
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/sh
+        - -ec
+        - |
+          RUNC_RUNTIME=/usr/bin/runc
+          if [ -x /host/usr/local/sbin/runc ]; then
+            RUNC_RUNTIME=/usr/local/sbin/runc
+          fi
+          install -d -m 0755 /host/usr/local/bin /host/etc/rootpv
+          install -m 0755 /usr/local/bin/rootfs-runtime-wrapper /host/usr/local/bin/rootfs-runtime-wrapper
+          ln -sfn rootfs-runtime-wrapper /host/usr/local/bin/rootfs-runtime-wrapper-runc
+          ln -sfn rootfs-runtime-wrapper /host/usr/local/bin/rootfs-runtime-wrapper-nvidia
+          cat >/host/etc/rootpv/rootfs-runtime-wrapper.yaml <<EOF
+          defaultDelegateRuntime: ${RUNC_RUNTIME}
+          rootfsdSocket: /run/persistent-rootfsd/rootfsd.sock
+          runtimeRoot: /run/rootpv/rootfs
+          delegateRuntimeByWrapper:
+            rootfs-runtime-wrapper: ${RUNC_RUNTIME}
+            rootfs-runtime-wrapper-runc: ${RUNC_RUNTIME}
+            rootfs-runtime-wrapper-nvidia: /usr/bin/nvidia-container-runtime
+          EOF
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: host-usr-local-bin
+          mountPath: /host/usr/local/bin
+        - name: host-usr-local-sbin
+          mountPath: /host/usr/local/sbin
+          readOnly: true
+        - name: host-etc-rootpv
+          mountPath: /host/etc/rootpv
+      - name: configure-containerd-rootpv
+        image: rootpv:latest
+        imagePullPolicy: IfNotPresent
+        command:
+        - /usr/local/bin/scripts/configure-containerd-rootpv.sh
+        env:
+        - name: CONTAINERD_CONFIG
+          value: /host/etc/containerd/config.toml
+        - name: ROOTPV_RUNC_WRAPPER
+          value: /usr/local/bin/rootfs-runtime-wrapper-runc
+        - name: ROOTPV_NVIDIA_WRAPPER
+          value: /usr/local/bin/rootfs-runtime-wrapper-nvidia
+        - name: ROOTPV_VALIDATE_MODE
+          value: toml
+        - name: ROOTPV_RESTART_COMMAND
+          value: >-
+            if command -v nsenter >/dev/null 2>&1; then nsenter -t 1 -m -u -i -n -p -- sh -ec 'if command -v systemctl >/dev/null 2>&1; then systemctl restart containerd; else pids="$(pidof containerd 2>/dev/null || true)"; [ -n "$pids" ] && kill -HUP $pids; fi'; else pids="$(pidof containerd 2>/dev/null || true)"; [ -n "$pids" ] && kill -HUP $pids; fi
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: containerd-etc
+          mountPath: /host/etc/containerd
+        - name: host-proc
+          mountPath: /host/proc
+          readOnly: true
+      containers:
+      - name: persistent-rootfsd
+        image: rootpv:latest
+        imagePullPolicy: IfNotPresent
+        args:
+        - --metrics-addr=:8080
+        - --kubelet-root=/var/lib/kubelet
+        - --rootfsd-socket=/run/persistent-rootfsd/rootfsd.sock
+        - --overlay-delegate-root=/var/lib/containerd/rootpv-overlay-delegate
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        ports:
+        - name: metrics
+          containerPort: 8080
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: metrics
+          initialDelaySeconds: 2
+          periodSeconds: 10
+          timeoutSeconds: 2
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: metrics
+          initialDelaySeconds: 10
+          periodSeconds: 20
+          timeoutSeconds: 2
+          failureThreshold: 3
+        securityContext:
+          privileged: true
+          capabilities:
+            add:
+            - SYS_ADMIN
+            - DAC_READ_SEARCH
+            - FOWNER
+        volumeMounts:
+        - name: config
+          mountPath: /etc/persistent-rootfs
+          readOnly: true
+        - name: kubelet
+          mountPath: /var/lib/kubelet
+          mountPropagation: HostToContainer
+        - name: containerd-run
+          mountPath: /run/containerd
+        - name: containerd-lib
+          mountPath: /var/lib/containerd
+          mountPropagation: Bidirectional
+        - name: rootfsd-run
+          mountPath: /run/persistent-rootfsd
+          mountPropagation: Bidirectional
+        - name: containerd-etc
+          mountPath: /etc/containerd
+        - name: host-usr-bin
+          mountPath: /host/usr/bin
+          readOnly: true
+        - name: host-usr-local-bin
+          mountPath: /host/usr/local/bin
+          readOnly: true
+        - name: host-usr-local-sbin
+          mountPath: /host/usr/local/sbin
+          readOnly: true
+        - name: host-proc
+          mountPath: /host/proc
+          readOnly: true
+        - name: host-sys
+          mountPath: /host/sys
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: persistent-rootfs-webhook-config
+          items:
+          - key: rootfsd.yaml
+            path: rootfsd.yaml
+          - key: runtimeClassMapping.yaml
+            path: runtimeClassMapping.yaml
+          - key: storagePolicy.yaml
+            path: storagePolicy.yaml
+      - name: kubelet
+        hostPath:
+          path: /var/lib/kubelet
+          type: Directory
+      - name: containerd-run
+        hostPath:
+          path: /run/containerd
+          type: Directory
+      - name: containerd-lib
+        hostPath:
+          path: /var/lib/containerd
+          type: Directory
+      - name: rootfsd-run
+        hostPath:
+          path: /run/persistent-rootfsd
+          type: DirectoryOrCreate
+      - name: host-usr-local-bin
+        hostPath:
+          path: /usr/local/bin
+          type: DirectoryOrCreate
+      - name: host-usr-local-sbin
+        hostPath:
+          path: /usr/local/sbin
+          type: DirectoryOrCreate
+      - name: host-usr-bin
+        hostPath:
+          path: /usr/bin
+          type: Directory
+      - name: host-etc-rootpv
+        hostPath:
+          path: /etc/rootpv
+          type: DirectoryOrCreate
+      - name: containerd-etc
+        hostPath:
+          path: /etc/containerd
+          type: Directory
+      - name: host-proc
+        hostPath:
+          path: /proc
+          type: Directory
+      - name: host-sys
+        hostPath:
+          path: /sys
+          type: Directory

@@ -1,0 +1,112 @@
+{{- if .Values.webhook.enabled }}
+{{- $secretName := include "rootpv.webhookTLSSecretName" . -}}
+{{- $serviceName := include "rootpv.webhookServiceName" . -}}
+{{- $duration := int .Values.webhook.certs.durationDays -}}
+{{- $cn := printf "%s.%s.svc" $serviceName .Release.Namespace -}}
+{{- $altNames := list $serviceName (printf "%s.%s" $serviceName .Release.Namespace) $cn (printf "%s.%s.svc.cluster.local" $serviceName .Release.Namespace) -}}
+{{- $ca := genCA (printf "%s-ca" $serviceName) $duration -}}
+{{- $cert := genSignedCert $cn nil $altNames $duration $ca -}}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace $secretName | default dict -}}
+{{- $existingData := index $existing "data" | default dict -}}
+{{- $existingTLSCrt := index $existingData "tls.crt" -}}
+{{- $existingTLSKey := index $existingData "tls.key" -}}
+{{- $existingCACrt := index $existingData "ca.crt" -}}
+{{- $generatedTLSCrt := $cert.Cert | b64enc -}}
+{{- $generatedTLSKey := $cert.Key | b64enc -}}
+{{- $generatedCACrt := $ca.Cert | b64enc -}}
+{{- $tlsCrt := default $generatedTLSCrt $existingTLSCrt -}}
+{{- $tlsKey := default $generatedTLSKey $existingTLSKey -}}
+{{- $caCrt := $generatedCACrt -}}
+{{- if $existingCACrt -}}
+{{- $caCrt = $existingCACrt -}}
+{{- else if $existingTLSCrt -}}
+{{- $caCrt = $existingTLSCrt -}}
+{{- end -}}
+{{- $caBundle := default $caCrt .Values.webhook.certs.caBundle -}}
+{{- if not .Values.webhook.certs.existingSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secretName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+{{ include "rootpv.controllerLabels" . | nindent 4 }}
+type: kubernetes.io/tls
+data:
+  tls.crt: {{ $tlsCrt }}
+  tls.key: {{ $tlsKey }}
+  ca.crt: {{ $caCrt }}
+---
+{{- end }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: persistent-rootfs-mutating-webhook
+  labels:
+{{ include "rootpv.labels" . | nindent 4 }}
+webhooks:
+- name: mpod.persistent-rootfs.ecloud.com
+  admissionReviewVersions:
+  - v1
+  sideEffects: None
+  failurePolicy: {{ .Values.webhook.failurePolicy }}
+  matchPolicy: {{ .Values.webhook.matchPolicy }}
+  timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+  reinvocationPolicy: {{ .Values.webhook.reinvocationPolicy }}
+  namespaceSelector:
+{{ toYaml .Values.webhook.namespaceSelector | nindent 4 }}
+  objectSelector:
+{{ toYaml .Values.webhook.objectSelector | nindent 4 }}
+  rules:
+  - apiGroups:
+    - ""
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    resources:
+    - pods
+    scope: Namespaced
+  clientConfig:
+    service:
+      namespace: {{ .Release.Namespace }}
+      name: {{ $serviceName }}
+      path: /mutate-v1-pod
+      port: 443
+    caBundle: {{ $caBundle }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: persistent-rootfs-validating-webhook
+  labels:
+{{ include "rootpv.labels" . | nindent 4 }}
+webhooks:
+- name: vpod.persistent-rootfs.ecloud.com
+  admissionReviewVersions:
+  - v1
+  sideEffects: None
+  failurePolicy: {{ .Values.webhook.failurePolicy }}
+  matchPolicy: {{ .Values.webhook.matchPolicy }}
+  timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+  namespaceSelector:
+{{ toYaml .Values.webhook.namespaceSelector | nindent 4 }}
+  rules:
+  - apiGroups:
+    - ""
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - pods
+    scope: Namespaced
+  clientConfig:
+    service:
+      namespace: {{ .Release.Namespace }}
+      name: {{ $serviceName }}
+      path: /validate-v1-pod
+      port: 443
+    caBundle: {{ $caBundle }}
+{{- end }}

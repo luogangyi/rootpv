@@ -1,0 +1,181 @@
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "rootpv.controllerServiceAccountName" . }}
+  labels:
+{{ include "rootpv.controllerLabels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  - nodes
+  - persistentvolumes
+  - persistentvolumeclaims
+  - events
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+  - update
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ecloud.com
+  resources:
+  - persistentrootfses
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ecloud.com
+  resources:
+  - persistentrootfses/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - node.k8s.io
+  resources:
+  - runtimeclasses
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "rootpv.controllerServiceAccountName" . }}
+  labels:
+{{ include "rootpv.controllerLabels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "rootpv.controllerServiceAccountName" . }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "rootpv.controllerServiceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "rootpv.nodeServiceAccountName" . }}
+  labels:
+{{ include "rootpv.nodeAgentLabels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  - pods/status
+  - nodes
+  - persistentvolumes
+  - persistentvolumeclaims
+  - events
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - patch
+  - update
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+  - update
+- apiGroups:
+  - ecloud.com
+  resources:
+  - persistentrootfses
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ecloud.com
+  resources:
+  - persistentrootfses/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - node.k8s.io
+  resources:
+  - runtimeclasses
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "rootpv.nodeServiceAccountName" . }}
+  labels:
+{{ include "rootpv.nodeAgentLabels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "rootpv.nodeServiceAccountName" . }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "rootpv.nodeServiceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+{{- end }}

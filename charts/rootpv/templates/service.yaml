@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "rootpv.webhookServiceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+{{ include "rootpv.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+{{ include "rootpv.controllerSelectorLabels" . | nindent 4 }}
+  ports:
+  - name: https-webhook
+    port: 443
+    protocol: TCP
+    targetPort: webhook
+  - name: metrics
+    port: 8080
+    protocol: TCP
+    targetPort: metrics

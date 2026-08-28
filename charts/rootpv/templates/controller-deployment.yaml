@@ -1,0 +1,110 @@
+{{- if .Values.controller.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rootpv.controllerName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+{{ include "rootpv.controllerLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.controller.replicas }}
+  selector:
+    matchLabels:
+{{ include "rootpv.controllerSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+{{ include "rootpv.controllerLabels" . | nindent 8 }}
+      {{- with .Values.controller.podAnnotations }}
+      annotations:
+{{ toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "rootpv.controllerServiceAccountName" . }}
+      {{- with .Values.controller.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.tolerations }}
+      tolerations:
+{{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controller.affinity }}
+      affinity:
+{{ toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+      - name: controller
+        image: {{ include "rootpv.image" . }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+        - /usr/local/bin/persistent-rootfs-controller
+        args:
+        - --addr={{ .Values.controller.webhookAddr }}
+        - --metrics-addr={{ .Values.controller.metricsAddr }}
+        {{- if .Values.runtimeAdapterDiscovery.enabled }}
+        - --runtime-adapter-discovery=true
+        {{- end }}
+        - --runtime-class-mode={{ .Values.controller.runtimeClassMode }}
+        - --tls-cert-file=/tls/tls.crt
+        - --tls-private-key-file=/tls/tls.key
+        ports:
+        - name: webhook
+          containerPort: 9443
+          protocol: TCP
+        - name: metrics
+          containerPort: 8080
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: metrics
+{{ toYaml .Values.controller.readinessProbe | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: metrics
+{{ toYaml .Values.controller.livenessProbe | nindent 10 }}
+        securityContext:
+{{ toYaml .Values.controller.securityContext | nindent 10 }}
+        {{- with .Values.controller.resources }}
+        resources:
+{{ toYaml . | nindent 10 }}
+        {{- end }}
+        volumeMounts:
+        - name: config
+          mountPath: /etc/persistent-rootfs
+          readOnly: true
+        - name: webhook-certs
+          mountPath: /tls
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: {{ include "rootpv.configMapName" . }}
+          items:
+          {{- if not .Values.runtimeAdapterDiscovery.enabled }}
+          - key: runtimeClassMapping.yaml
+            path: runtimeClassMapping.yaml
+          {{- end }}
+          - key: storagePolicy.yaml
+            path: storagePolicy.yaml
+      - name: webhook-certs
+        secret:
+          secretName: {{ include "rootpv.webhookTLSSecretName" . }}
+{{- if .Values.controller.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "rootpv.controllerName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+{{ include "rootpv.controllerLabels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.controller.pdb.minAvailable }}
+  selector:
+    matchLabels:
+{{ include "rootpv.controllerSelectorLabels" . | nindent 6 }}
+{{- end }}
+{{- end }}
