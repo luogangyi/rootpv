@@ -3,8 +3,9 @@ PLATFORM ?= linux/amd64
 PLATFORMS ?= linux/amd64,linux/arm64
 PUSH_SLEEP_SECONDS ?= 10
 PROVENANCE ?= false
+E2E_CONFIG ?= tests/e2e/configs/.ebs-cluster.env
 
-.PHONY: test build image push push-multiarch deploy helm-lint helm-template
+.PHONY: test build image push push-multiarch deploy helm-lint helm-template e2e-functional e2e-performance
 
 test:
 	go test ./...
@@ -32,3 +33,9 @@ helm-lint:
 
 helm-template:
 	helm template rootpv charts/rootpv --namespace rootpv-system --include-crds
+
+e2e-functional:
+	tests/e2e/run-functional.sh --config $(E2E_CONFIG)
+
+e2e-performance:
+	tests/e2e/run-performance.sh --config $(E2E_CONFIG)
