@@ -35,7 +35,7 @@ RootPV 包含以下组件：
 
 RootPV 仅使用 Kubernetes、containerd、OCI runtime-spec 和 Linux VFS 的公开接口。它不会 patch、替换或 fork containerd，也不接管 containerd 的镜像和 snapshot 垃圾回收。
 
-## 当前范围
+## 当前范围与限制
 
 - 使用原生 containerd `overlayfs` snapshotter 的 Linux 节点。
 - 基于 PVC 的单写持久根文件系统。
@@ -44,16 +44,35 @@ RootPV 仅使用 Kubernetes、containerd、OCI runtime-spec 和 Linux VFS 的公
 
 首个版本不支持：非 containerd 运行时、非 `overlayfs` snapshotter、rootless 或非特权节点安装、一个根文件系统的读写共享、跨镜像链自动 Reset/Rebase，以及将可写层自动转换为 OCI 镜像。
 
-## 快速开始
+当前端到端测试仅覆盖 Linux x86_64、Kubernetes v1.29 系列、原生 containerd 2.1、
+`io.containerd.runc.v2` 运行时，以及动态供给的 ReadWriteOnce 块存储 PVC。其他容器运行时、
+snapshotter、CPU 架构、存储后端、节点重启/故障恢复和设备专用运行时，尚未完成同等范围的端到端
+验证。镜像可以构建为某一架构，并不等同于该架构已进入验证过的兼容范围。
+
+## 安装与部署
 
 ### 前提条件
 
 - 运行 Linux 节点和 containerd 的 Kubernetes 集群。
 - 可动态或静态提供 filesystem 类型 PVC 的存储类；该 PVC 必须适合承载 OverlayFS 的 `upperdir` 和 `workdir`。
 - Helm 3 与 `kubectl`。
-- 已明确选定可安装 RootPV 节点组件的节点。
+- 具备集群管理员权限。节点代理为特权组件，会在选定节点安装 runtime wrapper 和 RootPV runtime handler。
+- 已明确选定可安装 RootPV 节点组件的节点；建议先从少量 canary 节点开始。
 
-构建并推送 RootPV 镜像后，为需要运行节点组件的节点打标：
+### 1. 构建并推送镜像
+
+为目标架构构建镜像，并推送到选定节点可访问的镜像仓库：
+
+```bash
+make image IMAGE=<image-repository>:<image-tag>
+make push IMAGE=<image-repository>:<image-tag>
+```
+
+如需发布多架构镜像，请先配置镜像仓库认证，再执行 `make push-multiarch IMAGE=<image-repository>:<image-tag>`。
+
+### 2. 使用 Helm 部署
+
+仅为需要运行 RootPV 节点代理的节点打标，然后安装 Chart：
 
 ```bash
 kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
@@ -66,7 +85,22 @@ helm upgrade --install rootpv charts/rootpv \
 
 kubectl -n rootpv-system rollout status deploy/persistent-rootfs-controller --timeout=180s
 kubectl -n rootpv-system rollout status ds/persistent-rootfsd --timeout=180s
+kubectl get runtimeclass -l ecloud.com/managed-by=rootpv
 ```
+
+安装器会校验并更新带标节点上的 containerd runtime 配置，必要时会 reload 或 restart containerd。
+部署前请检查 `charts/rootpv/values.yaml` 中的节点路径、containerd socket 和重启设置；应按集群运维
+规范安排维护窗口或先 drain canary 节点。
+
+推荐使用 Helm 部署。对于自行管理镜像替换和配置的环境，也可使用原生 manifests：
+
+```bash
+# 先将 deploy/manifests 中的 rootpv:latest 替换为节点可访问的镜像。
+kubectl apply -f deploy/crds
+kubectl apply -f deploy/manifests
+```
+
+### 3. 启用工作负载
 
 创建 PVC 后，通过目标容器、PVC volume、PVC 内相对路径和严格镜像策略显式启用 RootPV：
 
@@ -96,6 +130,33 @@ spec:
 ```
 
 更多配置和运维信息请参阅[文档索引](docs/README.md)、[部署指南](docs/user-guide/deployment.md)和 [Helm Chart 文档](charts/rootpv/README.md)。
+
+## 验证结果
+
+最近一次集群验证覆盖以下功能场景：
+
+| 功能测试用例 | 结果 |
+| --- | --- |
+| Controller、节点代理与 RootPV 就绪节点检查 | 通过 |
+| 未显式启用 RootPV 的 Pod 保持普通运行时路径 | 通过 |
+| 指向不存在目标容器的配置由准入阶段拒绝 | 通过 |
+| 动态 PVC 工作负载注入预期 RuntimeClass 和 runtime adapter | 通过 |
+| 可写根目录标记在 Pod 删除并重建后仍可读取 | 通过 |
+| 测试命名空间与 PVC 回收 | 通过 |
+
+性能测试使用 1 轮预热、每个路径 3 轮正式测量和每轮 64MiB 同步写入。两条路径固定使用相同
+镜像、节点、写入量和 Pod 生命周期：
+
+| 指标 | 未启用 RootPV | 启用 RootPV | 性能损耗占比 |
+| --- | ---: | ---: | ---: |
+| Pod 创建至 Running（平均 / P95） | 5500 / 5700 ms | 14560 / 15553 ms | 平均 +164.73%；P95 +172.86% |
+| 根文件系统顺序写入（平均 / P95） | 1910 / 1972 ms | 1995 / 2066 ms | 平均 +4.45%；P95 +4.77% |
+| Pod 删除与运行时清理（平均 / P95） | 32336 / 32440 ms | 32247 / 32519 ms | 平均 -0.28%；P95 +0.24% |
+| 根文件系统顺序写入吞吐量 | 33.50 MiB/s | 32.08 MiB/s | 4.24% |
+
+未启用 RootPV 时写入容器可写层，启用 RootPV 时写入持久根目录。因此表中的差异表示持久根目录
+的端到端成本，并非仅 runtime wrapper 的开销。这些数据仅为小样本参考而非性能 SLO；应仅与相同
+节点、存储后端、镜像缓存状态和集群负载下的历史结果比较。
 
 ## 开发
 
