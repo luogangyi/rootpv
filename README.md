@@ -55,12 +55,44 @@ architecture does not by itself mean that it is in the validated compatibility s
 ### Prerequisites
 
 - A Kubernetes cluster with Linux nodes and containerd.
-- A storage class that provisions filesystem-mode PVCs. The PVC must be suitable for OverlayFS upper/work directories.
+- A filesystem-mode ReadWriteOnce StorageClass suitable for OverlayFS upper/work directories.
 - Helm 3 and `kubectl`.
 - Cluster-administrator access. The node agent is privileged and installs the runtime wrapper and RootPV runtime handler on selected nodes.
-- Nodes that are explicitly selected for RootPV. Start with a small canary node set.
+- Explicitly selected RootPV nodes. Start with a small canary node set.
 
-### 1. Build and publish the image
+Both Helm installation paths update the containerd runtime configuration only on labeled nodes and reload or
+restart containerd when required. Review node paths, the containerd socket, and restart settings in
+`charts/rootpv/values.yaml`; plan the rollout according to your cluster's maintenance policy.
+
+### 1. Quick start: use CI artifacts
+
+Use this path to evaluate RootPV directly from the image and OCI Chart published by openFuyao CI. Replace
+`<storage-class>` with the StorageClass selected above.
+
+```bash
+export ROOTPV_IMAGE_REPOSITORY=openfuyao-0qfqnk.swr-pro.myhuaweicloud.com/openfuyao/rootpv
+export ROOTPV_IMAGE_TAG=latest
+export ROOTPV_CHART=oci://openfuyao-0qfqnk.swr-pro.myhuaweicloud.com/charts/rootpv
+export ROOTPV_CHART_VERSION=0.0.0-latest
+
+kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
+
+helm upgrade --install rootpv "${ROOTPV_CHART}" \
+  --version "${ROOTPV_CHART_VERSION}" \
+  --namespace rootpv-system \
+  --create-namespace \
+  --set "image.repository=${ROOTPV_IMAGE_REPOSITORY}" \
+  --set "image.tag=${ROOTPV_IMAGE_TAG}" \
+  --set "image.pullPolicy=Always" \
+  --set-string 'config.storagePolicy.allowStorageClasses[0]=<storage-class>' \
+  --wait --timeout 10m
+```
+
+`latest` and `0.0.0-latest` are CI artifacts and can change over time. Pin an image digest and a released Chart
+version for repeatable or production deployments. Continue with [Verify the deployment](#4-verify-the-deployment)
+after installation.
+
+### 2. Build and deploy custom artifacts
 
 Build an image for the target architecture and push it to an image registry reachable by the selected nodes:
 
@@ -71,9 +103,16 @@ make push IMAGE=<image-repository>:<image-tag>
 
 For multi-architecture publishing, use `make push-multiarch IMAGE=<image-repository>:<image-tag>` after configuring registry authentication.
 
-### 2. Deploy with Helm
+After the image is available, choose one deployment mechanism:
 
-Label only the nodes that should run the RootPV node agent, then install the chart:
+- Use the Helm command below for normal installations. Helm manages values, release history, upgrades, and
+  uninstallation.
+- Use the native-manifest path in Section 3 only when Helm is unavailable or when GitOps/IaC tooling must own
+  the rendered Kubernetes resources. It replaces the Helm command below; do not use both paths for the same
+  RootPV installation.
+
+For the recommended Helm path, deploy the locally checked-out Chart with the image you built. Label only the
+nodes that should run the RootPV node agent:
 
 ```bash
 kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
@@ -82,30 +121,50 @@ helm upgrade --install rootpv charts/rootpv \
   --namespace rootpv-system \
   --create-namespace \
   --set image.repository=<image-repository> \
-  --set image.tag=<image-tag>
-
-kubectl -n rootpv-system rollout status deploy/persistent-rootfs-controller --timeout=180s
-kubectl -n rootpv-system rollout status ds/persistent-rootfsd --timeout=180s
-kubectl get runtimeclass -l ecloud.com/managed-by=rootpv
+  --set image.tag=<image-tag> \
+  --set-string 'config.storagePolicy.allowStorageClasses[0]=<storage-class>' \
+  --wait --timeout 10m
 ```
 
-The installer validates and updates the containerd runtime configuration on labeled nodes, then reloads or
-restarts containerd when required. Review `charts/rootpv/values.yaml` for node paths, containerd socket and
-restart settings before installation. Plan a maintenance window or drain canary nodes according to your
-cluster's operational policy.
+### 3. Alternative: deploy native manifests
 
-Helm is the recommended deployment path. Native manifests are also available for environments that manage
-their own image substitutions and configuration:
+This path uses the image built in Section 2, but replaces that section's Helm command and does not create a
+Helm release. Use it only when Helm is unavailable or disallowed, or when a GitOps/IaC workflow must manage
+the repository's raw Kubernetes resources.
+
+Before applying the manifests:
+
+1. Replace every `rootpv:latest` image reference in `deploy/manifests/50-controller-deployment.yaml` and
+   `deploy/manifests/50-daemonset.yaml` with `<image-repository>:<image-tag>`.
+2. Set `config.storagePolicy.allowStorageClasses` in `deploy/manifests/20-config.yaml` to include the selected
+   StorageClass.
+3. Label the intended node-agent nodes, and ensure these resources are not already managed by a Helm release
+   in the same namespace.
 
 ```bash
-# Replace rootpv:latest in deploy/manifests with an accessible image first.
+kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
 kubectl apply -f deploy/crds
 kubectl apply -f deploy/manifests
 ```
 
-### 3. Enable a workload
+For later changes, update the same manifest files and apply them again through `kubectl` or the GitOps system.
+Do not switch to the Helm path without first transferring ownership of the existing resources.
 
-Create a PVC and opt a Pod in with the target container, PVC volume, PVC-relative path, and strict image policy:
+### 4. Verify the deployment
+
+Run these checks after any deployment path:
+
+```bash
+kubectl -n rootpv-system rollout status deploy/persistent-rootfs-controller --timeout=180s
+kubectl -n rootpv-system rollout status ds/persistent-rootfsd --timeout=180s
+kubectl get runtimeclass -l ecloud.com/managed-by=rootpv
+kubectl get nodes -l ecloud.com/persistent-rootfs-ready=true
+```
+
+### 5. Verify a persistent-rootfs workload
+
+After creating a PVC with the selected StorageClass, opt a Pod in with the target container, PVC volume,
+PVC-relative path, and strict image policy:
 
 ```yaml
 apiVersion: v1

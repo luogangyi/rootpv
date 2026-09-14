@@ -54,12 +54,43 @@ snapshotter、CPU 架构、存储后端、节点重启/故障恢复和设备专�
 ### 前提条件
 
 - 运行 Linux 节点和 containerd 的 Kubernetes 集群。
-- 可动态或静态提供 filesystem 类型 PVC 的存储类；该 PVC 必须适合承载 OverlayFS 的 `upperdir` 和 `workdir`。
+- 可提供适合 OverlayFS `upperdir`/`workdir` 的 filesystem 类型 ReadWriteOnce StorageClass。
 - Helm 3 与 `kubectl`。
 - 具备集群管理员权限。节点代理为特权组件，会在选定节点安装 runtime wrapper 和 RootPV runtime handler。
 - 已明确选定可安装 RootPV 节点组件的节点；建议先从少量 canary 节点开始。
 
-### 1. 构建并推送镜像
+两种 Helm 安装路径都会仅在带标节点上更新 containerd runtime 配置，并在必要时 reload 或 restart
+containerd。部署前请检查 `charts/rootpv/values.yaml` 中的节点路径、containerd socket 和重启设置，
+并按集群运维规范安排发布窗口。
+
+### 1. 使用社区 CI 制品快速开始
+
+可直接使用 openFuyao CI 发布的镜像和 OCI Chart 进行快速评估。请将 `<storage-class>` 替换为上述选定的
+StorageClass。
+
+```bash
+export ROOTPV_IMAGE_REPOSITORY=openfuyao-0qfqnk.swr-pro.myhuaweicloud.com/openfuyao/rootpv
+export ROOTPV_IMAGE_TAG=latest
+export ROOTPV_CHART=oci://openfuyao-0qfqnk.swr-pro.myhuaweicloud.com/charts/rootpv
+export ROOTPV_CHART_VERSION=0.0.0-latest
+
+kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
+
+helm upgrade --install rootpv "${ROOTPV_CHART}" \
+  --version "${ROOTPV_CHART_VERSION}" \
+  --namespace rootpv-system \
+  --create-namespace \
+  --set "image.repository=${ROOTPV_IMAGE_REPOSITORY}" \
+  --set "image.tag=${ROOTPV_IMAGE_TAG}" \
+  --set "image.pullPolicy=Always" \
+  --set-string 'config.storagePolicy.allowStorageClasses[0]=<storage-class>' \
+  --wait --timeout 10m
+```
+
+`latest` 和 `0.0.0-latest` 均为 CI 制品，内容可能随构建变化。需要可复现或生产部署时，请固定镜像
+digest 和正式发布的 Chart 版本。安装后继续执行[验证部署](#4-验证部署)。
+
+### 2. 构建并部署自定义制品
 
 为目标架构构建镜像，并推送到选定节点可访问的镜像仓库：
 
@@ -70,9 +101,13 @@ make push IMAGE=<image-repository>:<image-tag>
 
 如需发布多架构镜像，请先配置镜像仓库认证，再执行 `make push-multiarch IMAGE=<image-repository>:<image-tag>`。
 
-### 2. 使用 Helm 部署
+镜像可用后，请在两种部署方式中选择其一：
 
-仅为需要运行 RootPV 节点代理的节点打标，然后安装 Chart：
+- 常规安装使用下方 Helm 命令。Helm 负责 values 管理、发布记录、升级和卸载。
+- 仅当无法使用 Helm，或 GitOps/IaC 工具必须接管渲染后的 Kubernetes 资源时，才使用第 3 节的原生
+  manifests 方式。它替代下方 Helm 命令，不能与 Helm 在同一个 RootPV 安装中同时使用。
+
+推荐的 Helm 路径是使用本地检出的 Chart 和刚刚构建的镜像进行部署。仅为需要运行 RootPV 节点代理的节点打标：
 
 ```bash
 kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
@@ -81,28 +116,48 @@ helm upgrade --install rootpv charts/rootpv \
   --namespace rootpv-system \
   --create-namespace \
   --set image.repository=<image-repository> \
-  --set image.tag=<image-tag>
-
-kubectl -n rootpv-system rollout status deploy/persistent-rootfs-controller --timeout=180s
-kubectl -n rootpv-system rollout status ds/persistent-rootfsd --timeout=180s
-kubectl get runtimeclass -l ecloud.com/managed-by=rootpv
+  --set image.tag=<image-tag> \
+  --set-string 'config.storagePolicy.allowStorageClasses[0]=<storage-class>' \
+  --wait --timeout 10m
 ```
 
-安装器会校验并更新带标节点上的 containerd runtime 配置，必要时会 reload 或 restart containerd。
-部署前请检查 `charts/rootpv/values.yaml` 中的节点路径、containerd socket 和重启设置；应按集群运维
-规范安排维护窗口或先 drain canary 节点。
+### 3. 备选方案：使用原生 manifests
 
-推荐使用 Helm 部署。对于自行管理镜像替换和配置的环境，也可使用原生 manifests：
+此路径复用第 2 节构建的镜像，但替代该节的 Helm 安装命令，且不会创建 Helm release。仅在无法或不允许
+使用 Helm，或 GitOps/IaC 流程必须管理仓库中的原始 Kubernetes 资源时使用。
+
+应用 manifests 前，请完成以下准备：
+
+1. 将 `deploy/manifests/50-controller-deployment.yaml` 和 `deploy/manifests/50-daemonset.yaml` 中全部
+   `rootpv:latest` 镜像引用替换为 `<image-repository>:<image-tag>`。
+2. 在 `deploy/manifests/20-config.yaml` 中设置 `config.storagePolicy.allowStorageClasses`，使其包含目标
+   StorageClass。
+3. 为要运行节点代理的节点打标，并确认同一 namespace 中没有 Helm release 正在管理这些资源。
 
 ```bash
-# 先将 deploy/manifests 中的 rootpv:latest 替换为节点可访问的镜像。
+kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
 kubectl apply -f deploy/crds
 kubectl apply -f deploy/manifests
 ```
 
-### 3. 启用工作负载
+后续修改时，更新相同的 manifests 文件后通过 `kubectl` 或 GitOps 系统再次应用。若要切换回 Helm 路径，
+请先完成已有资源的所有权迁移。
 
-创建 PVC 后，通过目标容器、PVC volume、PVC 内相对路径和严格镜像策略显式启用 RootPV：
+### 4. 验证部署
+
+任一部署路径完成后，执行以下检查：
+
+```bash
+kubectl -n rootpv-system rollout status deploy/persistent-rootfs-controller --timeout=180s
+kubectl -n rootpv-system rollout status ds/persistent-rootfsd --timeout=180s
+kubectl get runtimeclass -l ecloud.com/managed-by=rootpv
+kubectl get nodes -l ecloud.com/persistent-rootfs-ready=true
+```
+
+### 5. 验证持久根目录工作负载
+
+创建使用上述 StorageClass 的 PVC 后，通过目标容器、PVC volume、PVC 内相对路径和严格镜像策略
+显式启用 RootPV：
 
 ```yaml
 apiVersion: v1
