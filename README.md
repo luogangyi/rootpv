@@ -50,6 +50,25 @@ Other container runtimes, snapshotters, architectures, storage backends, node re
 device-specific runtimes have not yet completed the same end-to-end validation. Build support for an
 architecture does not by itself mean that it is in the validated compatibility set.
 
+## Compatibility validation matrix
+
+This table records evidence, not theoretical compatibility. A combination is added to **Validated** only after
+its verification record is published. Entries in **Not yet validated** are not support commitments.
+
+| Dimension | Combination or scope | Validated | Not yet validated |
+| --- | --- | --- | --- |
+| Baseline platform | linux/amd64; Kubernetes v1.29 series; containerd 2.1; `overlayfs`; stock `io.containerd.runc.v2`; RWO block PVC with ext4 | Functional and performance E2E | Recovery/reboot, upgrade/rollback, concurrency, and uninstall |
+| Kubernetes and containerd | Kubernetes v1.27, v1.28, v1.30 and later supported series; containerd 1.6, 1.7, 2.0, and additional 2.1 combinations | — | All listed pairings |
+| CPU architecture and kernel | linux/arm64 and additional supported Linux kernel/distribution combinations | — | Baseline suite and OverlayFS recovery coverage |
+| Storage | RWO block PVC with XFS | — | OverlayFS mount, persistence, and cleanup coverage |
+| runc-v2 adapters | Custom `io.containerd.runc.v2` runtimes using a non-wrapper `BinaryName` delegate | — | Adapter discovery plus lifecycle, signal, exit-code, and recovery coverage |
+| GPU runtimes | NVIDIA (including MIG/vGPU where available), AMD ROCm, Intel, and MThreads | — | Device workload, persistence, cleanup, and each device-partitioning mode |
+| NPU runtimes | Ascend and other runc-v2-compatible accelerators; whole-device and virtual/partitioned modes tracked separately | — | Vendor workload, persistence, cleanup, and isolation coverage |
+| Kata, gVisor, and other independent shims | `io.containerd.kata.v2`, runsc, and non-runc-v2 microVM/shim runtimes | — | RootPV workloads are architecturally unsupported; reject-behavior regression is pending |
+
+See the [compatibility validation plan and detailed matrix](docs/design/04-compatibility-validation-plan.md) for
+test cases, acceptance criteria, and planned environment coverage.
+
 ## Installation and deployment
 
 ### Prerequisites

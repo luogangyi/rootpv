@@ -49,6 +49,24 @@ RootPV 仅使用 Kubernetes、containerd、OCI runtime-spec 和 Linux VFS 的公
 snapshotter、CPU 架构、存储后端、节点重启/故障恢复和设备专用运行时，尚未完成同等范围的端到端
 验证。镜像可以构建为某一架构，并不等同于该架构已进入验证过的兼容范围。
 
+## 兼容性验证矩阵
+
+此表记录的是验证证据，而非理论兼容性。仅在对应验证记录发布后才会写入**已验证**列；
+**未验证**列中的组合不构成支持承诺。
+
+| 维度 | 组合或范围 | 已验证 | 未验证 |
+| --- | --- | --- | --- |
+| 基线平台 | linux/amd64；Kubernetes v1.29 系列；containerd 2.1；`overlayfs`；原生 `io.containerd.runc.v2`；ext4 的 RWO 块存储 PVC | 功能和性能 E2E | 恢复/节点重启、升级/回滚、并发和卸载 |
+| Kubernetes 与 containerd | Kubernetes v1.27、v1.28、v1.30 及后续受支持系列；containerd 1.6、1.7、2.0 和其他 2.1 组合 | — | 表中全部配对 |
+| CPU 架构与内核 | linux/arm64 及其他受支持 Linux 内核/发行版组合 | — | 基线用例与 OverlayFS 恢复覆盖 |
+| 存储 | XFS 的 RWO 块存储 PVC | — | OverlayFS 挂载、持久化和清理覆盖 |
+| runc-v2 adapter | `BinaryName` delegate 非 wrapper 的自定义 `io.containerd.runc.v2` runtime | — | adapter 发现、生命周期、信号、退出码和恢复 |
+| GPU runtime | NVIDIA（环境具备时分别覆盖 MIG/vGPU）、AMD ROCm、Intel 和 MThreads | — | 设备工作负载、持久化、清理和各设备切分形态 |
+| NPU runtime | Ascend 及其他 runc-v2 兼容加速器；整卡和虚拟/切分形态分别记录 | — | 厂商工作负载、持久化、清理和隔离 |
+| Kata、gVisor 与其他独立 shim | `io.containerd.kata.v2`、runsc 和非 runc-v2 的 microVM/shim runtime | — | RootPV 工作负载在当前架构下不支持；待补充明确拒绝行为回归 |
+
+测试用例、验收标准和待寻找的环境见[兼容性验证方案与详细矩阵](docs/design/04-compatibility-validation-plan.md)。
+
 ## 安装与部署
 
 ### 前提条件
