@@ -47,30 +47,8 @@ func TestReconcilerReacquiresCreatedLeaseBeforeSuccess(t *testing.T) {
 }
 
 func TestReconcilerCleansStoppedDelegatedRootfs(t *testing.T) {
-	runtimeRoot := filepath.Join(t.TempDir(), "runtime")
-	rootPath := filepath.Join(t.TempDir(), "persistent")
-	old := NewLeaseManager("node-1", nil)
-	lease := acquireRecoveryLease(t, old, rootPath, "container-id")
-	state := rootfsstate.State{
-		FormatVersion:        rootfsstate.FormatDelegationV1,
-		ContainerID:          "container-id",
-		LeaseID:              lease.LeaseID,
-		Phase:                rootfsstate.PhaseCreated,
-		MetaDir:              filepath.Join(rootPath, "meta"),
-		MergedDir:            filepath.Join(runtimeRoot, "container-id", "merged"),
-		RootfsEnabled:        true,
-		DelegateBinary:       "/delegate/runc",
-		RuntimeAdapterID:     "runc-v2",
-		RuntimeAdapterMode:   "Explicit",
-		RootfsHandler:        "persistent-rootfs-runc-v2",
-		RuntimeType:          "io.containerd.runc.v2",
-		ClusterAdapterDigest: "sha256:cluster",
-		NodeResolvedDigest:   "sha256:node",
-	}
-	if err := rootfsstate.Save(runtimeRoot, state.ContainerID, state); err != nil {
-		t.Fatal(err)
-	}
-	abandonLease(t, old, lease.LeaseID)
+	runtimeRoot, old, state := prepareDelegatedRecoveryState(t)
+	abandonLease(t, old, state.LeaseID)
 
 	cleaner := &fakeRecoveryCleaner{}
 	reconciler := Reconciler{
@@ -92,30 +70,8 @@ func TestReconcilerCleansStoppedDelegatedRootfs(t *testing.T) {
 }
 
 func TestReconcilerRetainsRunningDelegatedRootfs(t *testing.T) {
-	runtimeRoot := filepath.Join(t.TempDir(), "runtime")
-	rootPath := filepath.Join(t.TempDir(), "persistent")
-	old := NewLeaseManager("node-1", nil)
-	lease := acquireRecoveryLease(t, old, rootPath, "container-id")
-	state := rootfsstate.State{
-		FormatVersion:        rootfsstate.FormatDelegationV1,
-		ContainerID:          "container-id",
-		LeaseID:              lease.LeaseID,
-		Phase:                rootfsstate.PhaseCreated,
-		MetaDir:              filepath.Join(rootPath, "meta"),
-		MergedDir:            filepath.Join(runtimeRoot, "container-id", "merged"),
-		RootfsEnabled:        true,
-		DelegateBinary:       "/delegate/runc",
-		RuntimeAdapterID:     "runc-v2",
-		RuntimeAdapterMode:   "Explicit",
-		RootfsHandler:        "persistent-rootfs-runc-v2",
-		RuntimeType:          "io.containerd.runc.v2",
-		ClusterAdapterDigest: "sha256:cluster",
-		NodeResolvedDigest:   "sha256:node",
-	}
-	if err := rootfsstate.Save(runtimeRoot, state.ContainerID, state); err != nil {
-		t.Fatal(err)
-	}
-	abandonLease(t, old, lease.LeaseID)
+	runtimeRoot, old, state := prepareDelegatedRecoveryState(t)
+	abandonLease(t, old, state.LeaseID)
 
 	cleaner := &fakeRecoveryCleaner{}
 	reconciler := Reconciler{
@@ -138,22 +94,7 @@ func TestReconcilerRetainsRunningDelegatedRootfs(t *testing.T) {
 
 func TestReconcilerCleansDelegatedStateWhenLeaseMetadataIsGone(t *testing.T) {
 	runtimeRoot := filepath.Join(t.TempDir(), "runtime")
-	state := rootfsstate.State{
-		FormatVersion:        rootfsstate.FormatDelegationV1,
-		ContainerID:          "container-id",
-		LeaseID:              "missing-lease",
-		Phase:                rootfsstate.PhaseCreated,
-		MetaDir:              filepath.Join(t.TempDir(), "missing-meta"),
-		MergedDir:            filepath.Join(runtimeRoot, "container-id", "merged"),
-		RootfsEnabled:        true,
-		DelegateBinary:       "/delegate/runc",
-		RuntimeAdapterID:     "runc-v2",
-		RuntimeAdapterMode:   "Explicit",
-		RootfsHandler:        "persistent-rootfs-runc-v2",
-		RuntimeType:          "io.containerd.runc.v2",
-		ClusterAdapterDigest: "sha256:cluster",
-		NodeResolvedDigest:   "sha256:node",
-	}
+	state := delegatedRecoveryState(runtimeRoot, t.TempDir(), "missing-lease")
 	if err := rootfsstate.Save(runtimeRoot, state.ContainerID, state); err != nil {
 		t.Fatal(err)
 	}
@@ -408,6 +349,38 @@ func (c *fakeRecoveryCleaner) Cleanup(context.Context, rootfsstate.State) error 
 		*c.order = append(*c.order, "cleanup")
 	}
 	return c.err
+}
+
+func prepareDelegatedRecoveryState(t *testing.T) (string, *LeaseManager, rootfsstate.State) {
+	t.Helper()
+	runtimeRoot := filepath.Join(t.TempDir(), "runtime")
+	rootPath := filepath.Join(t.TempDir(), "persistent")
+	manager := NewLeaseManager("node-1", nil)
+	lease := acquireRecoveryLease(t, manager, rootPath, "container-id")
+	state := delegatedRecoveryState(runtimeRoot, rootPath, lease.LeaseID)
+	if err := rootfsstate.Save(runtimeRoot, state.ContainerID, state); err != nil {
+		t.Fatalf("Save delegated state: %v", err)
+	}
+	return runtimeRoot, manager, state
+}
+
+func delegatedRecoveryState(runtimeRoot, rootPath, leaseID string) rootfsstate.State {
+	return rootfsstate.State{
+		FormatVersion:        rootfsstate.FormatDelegationV1,
+		ContainerID:          "container-id",
+		LeaseID:              leaseID,
+		Phase:                rootfsstate.PhaseCreated,
+		MetaDir:              filepath.Join(rootPath, "meta"),
+		MergedDir:            filepath.Join(runtimeRoot, "container-id", "merged"),
+		RootfsEnabled:        true,
+		DelegateBinary:       "/delegate/runc",
+		RuntimeAdapterID:     "runc-v2",
+		RuntimeAdapterMode:   "Explicit",
+		RootfsHandler:        "persistent-rootfs-runc-v2",
+		RuntimeType:          "io.containerd.runc.v2",
+		ClusterAdapterDigest: "sha256:cluster",
+		NodeResolvedDigest:   "sha256:node",
+	}
 }
 
 func acquireRecoveryLease(t *testing.T, manager *LeaseManager, rootPath, containerID string) Lease {

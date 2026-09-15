@@ -60,6 +60,16 @@ type recoveryResult struct {
 	err             error
 }
 
+// recoveredStateCleaner 汇集恢复清理所需的依赖和本轮恢复结果。
+// 使用该结构避免在清理函数间传递过多参数。
+type recoveredStateCleaner struct {
+	reconciler Reconciler
+	processes  ProcessChecker
+	runtime    RuntimeStateChecker
+	cleaner    RecoveryCleaner
+	recovery   recoveryResult
+}
+
 func (r Reconciler) Reconcile(ctx context.Context) error {
 	if r.RuntimeRoot == "" || r.Leases == nil {
 		return fmt.Errorf("reconciler runtime root and lease manager are required")
@@ -101,7 +111,11 @@ func (r Reconciler) recoverStates(ctx context.Context, states []rootfsstate.Stat
 	return result
 }
 
-func (r Reconciler) cleanupRecoveredStates(ctx context.Context, states []rootfsstate.State, recovery recoveryResult) error {
+func (r Reconciler) cleanupRecoveredStates(
+	ctx context.Context,
+	states []rootfsstate.State,
+	recovery recoveryResult,
+) error {
 	processes := r.Processes
 	if processes == nil {
 		processes = ProcProcessChecker{}
@@ -115,28 +129,34 @@ func (r Reconciler) cleanupRecoveredStates(ctx context.Context, states []rootfss
 		cleaner = FailClosedRecoveryCleaner{}
 	}
 	var cleanupErr error
+	stateCleaner := recoveredStateCleaner{
+		reconciler: r,
+		processes:  processes,
+		runtime:    runtime,
+		cleaner:    cleaner,
+		recovery:   recovery,
+	}
 	for _, state := range states {
 		if _, recovered := recovery.recoveredStates[state.ContainerID]; !recovered {
 			continue
 		}
-		_, missingLease := recovery.missingLeases[state.ContainerID]
-		if err := r.cleanupRecoveredState(ctx, state, processes, runtime, cleaner, recovery.releasedStates, missingLease); err != nil {
+		if err := stateCleaner.cleanup(ctx, state); err != nil {
 			cleanupErr = errors.Join(cleanupErr, err)
 		}
 	}
 	return cleanupErr
 }
 
-func (r Reconciler) cleanupRecoveredState(ctx context.Context, state rootfsstate.State, processes ProcessChecker, runtime RuntimeStateChecker, cleaner RecoveryCleaner, releasedStates map[string]struct{}, missingLease bool) error {
+func (c recoveredStateCleaner) cleanup(ctx context.Context, state rootfsstate.State) error {
 	// Release 已成功时，前一轮已经完成了外部资源清理；此处只重试删除
 	// runtime state，避免再次撤销或清理已释放的租约。
-	if _, released := releasedStates[state.LeaseID]; released {
-		if err := r.removeRuntimeState(state.ContainerID); err != nil {
+	if _, released := c.recovery.releasedStates[state.LeaseID]; released {
+		if err := c.reconciler.removeRuntimeState(state.ContainerID); err != nil {
 			return fmt.Errorf("remove released runtime state for %s: %w", state.ContainerID, err)
 		}
 		return nil
 	}
-	retained, err := retainRecoveredState(ctx, state, processes, runtime)
+	retained, err := retainRecoveredState(ctx, state, c.processes, c.runtime)
 	if err != nil {
 		return fmt.Errorf("inspect recovered runtime state for %s: %w", state.ContainerID, err)
 	}
@@ -144,20 +164,20 @@ func (r Reconciler) cleanupRecoveredState(ctx context.Context, state rootfsstate
 		return nil
 	}
 	if state.Phase == rootfsstate.PhaseCreatingPending && state.AttemptStatus == rootfsstate.AttemptPending {
-		if err := r.Leases.RevokeCreate(ctx, state.LeaseID, state.AttemptToken); err != nil {
+		if err := c.reconciler.Leases.RevokeCreate(ctx, state.LeaseID, state.AttemptToken); err != nil {
 			return fmt.Errorf("revoke dead create attempt for %s: %w", state.ContainerID, err)
 		}
 	}
-	if err := cleaner.Cleanup(ctx, state); err != nil {
+	if err := c.cleaner.Cleanup(ctx, state); err != nil {
 		return fmt.Errorf("cleanup recovered state for %s: %w", state.ContainerID, err)
 	}
-	if missingLease {
-		return r.removeRuntimeState(state.ContainerID)
+	if _, missingLease := c.recovery.missingLeases[state.ContainerID]; missingLease {
+		return c.reconciler.removeRuntimeState(state.ContainerID)
 	}
-	if _, err := r.Leases.Release(ctx, state.LeaseID); err != nil {
+	if _, err := c.reconciler.Leases.Release(ctx, state.LeaseID); err != nil {
 		return fmt.Errorf("release recovered lease for %s: %w", state.ContainerID, err)
 	}
-	if err := r.removeRuntimeState(state.ContainerID); err != nil {
+	if err := c.reconciler.removeRuntimeState(state.ContainerID); err != nil {
 		return fmt.Errorf("remove recovered state for %s: %w", state.ContainerID, err)
 	}
 	return nil
@@ -171,7 +191,12 @@ func (r Reconciler) removeRuntimeState(containerID string) error {
 	return removeAll(filepath.Join(r.RuntimeRoot, containerID))
 }
 
-func retainRecoveredState(ctx context.Context, state rootfsstate.State, processes ProcessChecker, runtime RuntimeStateChecker) (bool, error) {
+func retainRecoveredState(
+	ctx context.Context,
+	state rootfsstate.State,
+	processes ProcessChecker,
+	runtime RuntimeStateChecker,
+) (bool, error) {
 	if state.FormatVersion == rootfsstate.FormatDelegationV1 && state.RootfsEnabled {
 		return runtime.Running(ctx, state)
 	}
@@ -232,6 +257,7 @@ func recoverableDelegationState(state rootfsstate.State) bool {
 // 状态的 task 才能继续占用 RootPV Overlay。
 type ContainerdRuntimeStateChecker struct{}
 
+// Running 判断 state 是否仍被 containerd 作为活跃 task 跟踪。
 func (ContainerdRuntimeStateChecker) Running(ctx context.Context, state rootfsstate.State) (bool, error) {
 	namespace := state.RuntimeNamespace
 	if namespace == "" {
@@ -339,7 +365,7 @@ func (c NamespaceRecoveryCleaner) Cleanup(ctx context.Context, state rootfsstate
 			return fmt.Errorf("mount_still_present: %q", state.MergedDir)
 		}
 	}
-	if state.Phase == rootfsstate.PhaseCreatingRegistered || state.Phase == rootfsstate.PhaseDeleting || recoverableDelegationState(state) {
+	if shouldDeleteRecoveredRuntime(state) {
 		if state.DelegateBinary == "" {
 			return fmt.Errorf("delegate binary is unavailable for recovered cleanup")
 		}
@@ -360,6 +386,11 @@ func (c NamespaceRecoveryCleaner) Cleanup(ctx context.Context, state rootfsstate
 		}
 	}
 	return nil
+}
+
+func shouldDeleteRecoveredRuntime(state rootfsstate.State) bool {
+	return state.Phase == rootfsstate.PhaseCreatingRegistered ||
+		state.Phase == rootfsstate.PhaseDeleting || recoverableDelegationState(state)
 }
 
 func findMountNamespaceHolder(procRoot string, inode uint64) (int, error) {
