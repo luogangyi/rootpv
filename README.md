@@ -44,23 +44,84 @@ RootPV uses public Kubernetes, containerd, OCI runtime-spec, and Linux VFS inter
 
 The following are out of scope for the initial release: non-containerd runtimes, non-`overlayfs` snapshotters, rootless or unprivileged node installation, shared read/write use of one root filesystem, automatic rebase/reset across image chains, and converting a writable layer into an OCI image.
 
-The current end-to-end validation is limited to a Linux x86_64 Kubernetes v1.29-series cluster with stock
-containerd 2.1, an `io.containerd.runc.v2` runtime, and dynamically provisioned ReadWriteOnce block PVCs.
+The full end-to-end baseline currently covers a Linux x86_64 Kubernetes v1.29-series cluster with
+containerd 2.1.1+aiinfra, an `io.containerd.runc.v2` runtime, and dynamically provisioned ReadWriteOnce
+block PVCs. On the same platform, the dynamic-PVC persistence-and-recreate path was also verified with
+official containerd 1.6.39, 1.7.35, 2.0.12, and static 2.1.9 builds. These version checks do not yet include the
+full recovery, upgrade, concurrency, or performance suite. The baseline also completed three rounds each of
+rootfsd, containerd-service, and node restart; ten-instance concurrent isolation; same-path single-writer
+exclusion; and a RootPV Helm upgrade/rollback.
+
+Directly downgrading a running containerd 2.1 state to 1.6 is not supported: the 1.6.28 candidate starts but
+cannot reuse the 2.1 runtime state. Cross-major rollback needs a controlled, drained-node migration that
+rebuilds runtime state. Helm uninstall currently stops the RootPV node agent but does not automatically remove
+the RootPV runtime handler written to the containerd configuration; node-level uninstall cleanup remains to be added.
 Other container runtimes, snapshotters, architectures, storage backends, node reboot/recovery cases, and
 device-specific runtimes have not yet completed the same end-to-end validation. Build support for an
 architecture does not by itself mean that it is in the validated compatibility set.
+
+## Compatibility validation matrix
+
+This table records evidence, not theoretical compatibility. A combination is added to **Validated** only after
+its verification record is published. Entries in **Not yet validated** are not support commitments.
+
+| Dimension | Combination or scope | Validated | Not yet validated |
+| --- | --- | --- | --- |
+| Baseline platform | linux/amd64; Kubernetes v1.29 series; containerd 2.1.1+aiinfra; `overlayfs`; stock `io.containerd.runc.v2`; RWO block PVC with ext4 | Functional and performance E2E; three rounds each of rootfsd, containerd-service, and node restart; ten-instance concurrent isolation; same-path single-writer exclusion; RootPV Helm upgrade/rollback | Controlled cross-major containerd migration; automatic runtime-handler cleanup after uninstall |
+| Kubernetes and containerd | Kubernetes v1.27, v1.28, v1.30 and later supported series; containerd 1.6, 1.7, 2.0, and additional 2.1 combinations | Kubernetes v1.29 + official containerd 1.6.39, 1.7.35, 2.0.12, and static 2.1.9: dynamic-PVC persistence and Pod recreation | All other listed pairings; recovery, upgrade, and performance on official builds |
+| CPU architecture and kernel | linux/arm64 and additional supported Linux kernel/distribution combinations | — | Baseline suite and OverlayFS recovery coverage |
+| Storage | RWO block PVC with XFS | — | OverlayFS mount, persistence, and cleanup coverage |
+| runc-v2 adapters | Custom `io.containerd.runc.v2` runtimes using a non-wrapper `BinaryName` delegate | — | Adapter discovery plus lifecycle, signal, exit-code, and recovery coverage |
+| GPU runtimes | NVIDIA (including MIG/vGPU where available), AMD ROCm, Intel, and MThreads | — | Device workload, persistence, cleanup, and each device-partitioning mode |
+| NPU runtimes | Ascend and other runc-v2-compatible accelerators; whole-device and virtual/partitioned modes tracked separately | — | Vendor workload, persistence, cleanup, and isolation coverage |
+| Kata, gVisor, and other independent shims | `io.containerd.kata.v2`, runsc, and non-runc-v2 microVM/shim runtimes | gVisor: RootPV opt-in is rejected; a normal gVisor Pod runs without RootPV mutation | Kata and other independent shims; RootPV workloads remain architecturally unsupported |
+
+See the [compatibility validation plan and detailed matrix](docs/design/04-compatibility-validation-plan.md) for
+test cases, acceptance criteria, and planned environment coverage.
 
 ## Installation and deployment
 
 ### Prerequisites
 
 - A Kubernetes cluster with Linux nodes and containerd.
-- A storage class that provisions filesystem-mode PVCs. The PVC must be suitable for OverlayFS upper/work directories.
+- A filesystem-mode ReadWriteOnce StorageClass suitable for OverlayFS upper/work directories.
 - Helm 3 and `kubectl`.
 - Cluster-administrator access. The node agent is privileged and installs the runtime wrapper and RootPV runtime handler on selected nodes.
-- Nodes that are explicitly selected for RootPV. Start with a small canary node set.
+- Explicitly selected RootPV nodes. Start with a small canary node set.
 
-### 1. Build and publish the image
+Both Helm installation paths update the containerd runtime configuration only on labeled nodes and reload or
+restart containerd when required. Review node paths, the containerd socket, and restart settings in
+`charts/rootpv/values.yaml`; plan the rollout according to your cluster's maintenance policy.
+
+### 1. Quick start: use CI artifacts
+
+Use this path to evaluate RootPV directly from the image and OCI Chart published by openFuyao CI. Replace
+`<storage-class>` with the StorageClass selected above.
+
+```bash
+export ROOTPV_IMAGE_REPOSITORY=openfuyao-0qfqnk.swr-pro.myhuaweicloud.com/openfuyao/rootpv
+export ROOTPV_IMAGE_TAG=latest
+export ROOTPV_CHART=oci://openfuyao-0qfqnk.swr-pro.myhuaweicloud.com/charts/rootpv
+export ROOTPV_CHART_VERSION=0.0.0-latest
+
+kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
+
+helm upgrade --install rootpv "${ROOTPV_CHART}" \
+  --version "${ROOTPV_CHART_VERSION}" \
+  --namespace rootpv-system \
+  --create-namespace \
+  --set "image.repository=${ROOTPV_IMAGE_REPOSITORY}" \
+  --set "image.tag=${ROOTPV_IMAGE_TAG}" \
+  --set "image.pullPolicy=Always" \
+  --set-string 'config.storagePolicy.allowStorageClasses[0]=<storage-class>' \
+  --wait --timeout 10m
+```
+
+`latest` and `0.0.0-latest` are CI artifacts and can change over time. Pin an image digest and a released Chart
+version for repeatable or production deployments. Continue with [Verify the deployment](#4-verify-the-deployment)
+after installation.
+
+### 2. Build and deploy custom artifacts
 
 Build an image for the target architecture and push it to an image registry reachable by the selected nodes:
 
@@ -71,9 +132,16 @@ make push IMAGE=<image-repository>:<image-tag>
 
 For multi-architecture publishing, use `make push-multiarch IMAGE=<image-repository>:<image-tag>` after configuring registry authentication.
 
-### 2. Deploy with Helm
+After the image is available, choose one deployment mechanism:
 
-Label only the nodes that should run the RootPV node agent, then install the chart:
+- Use the Helm command below for normal installations. Helm manages values, release history, upgrades, and
+  uninstallation.
+- Use the native-manifest path in Section 3 only when Helm is unavailable or when GitOps/IaC tooling must own
+  the rendered Kubernetes resources. It replaces the Helm command below; do not use both paths for the same
+  RootPV installation.
+
+For the recommended Helm path, deploy the locally checked-out Chart with the image you built. Label only the
+nodes that should run the RootPV node agent:
 
 ```bash
 kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
@@ -82,30 +150,50 @@ helm upgrade --install rootpv charts/rootpv \
   --namespace rootpv-system \
   --create-namespace \
   --set image.repository=<image-repository> \
-  --set image.tag=<image-tag>
-
-kubectl -n rootpv-system rollout status deploy/persistent-rootfs-controller --timeout=180s
-kubectl -n rootpv-system rollout status ds/persistent-rootfsd --timeout=180s
-kubectl get runtimeclass -l ecloud.com/managed-by=rootpv
+  --set image.tag=<image-tag> \
+  --set-string 'config.storagePolicy.allowStorageClasses[0]=<storage-class>' \
+  --wait --timeout 10m
 ```
 
-The installer validates and updates the containerd runtime configuration on labeled nodes, then reloads or
-restarts containerd when required. Review `charts/rootpv/values.yaml` for node paths, containerd socket and
-restart settings before installation. Plan a maintenance window or drain canary nodes according to your
-cluster's operational policy.
+### 3. Alternative: deploy native manifests
 
-Helm is the recommended deployment path. Native manifests are also available for environments that manage
-their own image substitutions and configuration:
+This path uses the image built in Section 2, but replaces that section's Helm command and does not create a
+Helm release. Use it only when Helm is unavailable or disallowed, or when a GitOps/IaC workflow must manage
+the repository's raw Kubernetes resources.
+
+Before applying the manifests:
+
+1. Replace every `rootpv:latest` image reference in `deploy/manifests/50-controller-deployment.yaml` and
+   `deploy/manifests/50-daemonset.yaml` with `<image-repository>:<image-tag>`.
+2. Set `config.storagePolicy.allowStorageClasses` in `deploy/manifests/20-config.yaml` to include the selected
+   StorageClass.
+3. Label the intended node-agent nodes, and ensure these resources are not already managed by a Helm release
+   in the same namespace.
 
 ```bash
-# Replace rootpv:latest in deploy/manifests with an accessible image first.
+kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
 kubectl apply -f deploy/crds
 kubectl apply -f deploy/manifests
 ```
 
-### 3. Enable a workload
+For later changes, update the same manifest files and apply them again through `kubectl` or the GitOps system.
+Do not switch to the Helm path without first transferring ownership of the existing resources.
 
-Create a PVC and opt a Pod in with the target container, PVC volume, PVC-relative path, and strict image policy:
+### 4. Verify the deployment
+
+Run these checks after any deployment path:
+
+```bash
+kubectl -n rootpv-system rollout status deploy/persistent-rootfs-controller --timeout=180s
+kubectl -n rootpv-system rollout status ds/persistent-rootfsd --timeout=180s
+kubectl get runtimeclass -l ecloud.com/managed-by=rootpv
+kubectl get nodes -l ecloud.com/persistent-rootfs-ready=true
+```
+
+### 5. Verify a persistent-rootfs workload
+
+After creating a PVC with the selected StorageClass, opt a Pod in with the target container, PVC volume,
+PVC-relative path, and strict image policy:
 
 ```yaml
 apiVersion: v1
