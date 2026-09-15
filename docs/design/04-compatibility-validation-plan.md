@@ -68,17 +68,17 @@ device plugin 的精确版本。
 | --- | --- | --- | --- | --- |
 | Kubernetes | v1.27 系列 | 选择一个受支持的 containerd 1.6/1.7 组合 | stock `io.containerd.runc.v2` | 待验证 |
 | Kubernetes | v1.28 系列 | 选择一个受支持的 containerd 1.7 组合 | stock `io.containerd.runc.v2` | 待验证 |
-| Kubernetes | v1.29 系列 | 基线组合；覆盖当前 E2E 场景 | stock `io.containerd.runc.v2` | 验证中（containerd 2.1 基础功能与性能） |
+| Kubernetes | v1.29 系列 | 基线组合；覆盖当前 E2E 场景 | stock `io.containerd.runc.v2` | 验证中（2.1.1+aiinfra：基础功能、性能、R01/R02/R03 各连续 3 轮、C07 并发与互斥、U01 Helm 升级/回滚；官方 1.6.39、1.7.35、2.0.12 和静态 2.1.9 已完成 C04） |
 | Kubernetes | v1.30 系列 | 选择一个受支持的 containerd 1.7/2.0 组合 | stock `io.containerd.runc.v2` | 待验证 |
 | Kubernetes | v1.31 及后续受支持系列 | 每新增一个项目支持的 Kubernetes minor 至少选择一个组合 | stock `io.containerd.runc.v2` | 待验证 |
-| containerd | 1.6.x | 在一个受支持 Kubernetes 版本上完整验证 | stock `io.containerd.runc.v2` | 待验证 |
-| containerd | 1.7.x | 在两个不同 Kubernetes minor 上完整验证 | stock `io.containerd.runc.v2` | 待验证 |
-| containerd | 2.0.x | 在一个受支持 Kubernetes 版本上完整验证 | stock `io.containerd.runc.v2` | 待验证 |
-| containerd | 2.1.x | 作为当前基线持续回归 | stock `io.containerd.runc.v2` | 验证中（Kubernetes v1.29 基础功能与性能） |
-| CPU 架构 | linux/amd64 | 每个 containerd 大版本至少一个基础组合 | stock `io.containerd.runc.v2` | 验证中（Kubernetes v1.29、containerd 2.1 基础功能与性能） |
+| containerd | 1.6.x | 在一个受支持 Kubernetes 版本上完整验证 | stock `io.containerd.runc.v2` | 验证中（官方 1.6.39 在 Kubernetes v1.29 完成 C04；切换后先重建节点 CSI 插件 Pod） |
+| containerd | 1.7.x | 在两个不同 Kubernetes minor 上完整验证 | stock `io.containerd.runc.v2` | 验证中（官方 1.7.35 在 Kubernetes v1.29 完成 C04） |
+| containerd | 2.0.x | 在一个受支持 Kubernetes 版本上完整验证 | stock `io.containerd.runc.v2` | 验证中（官方 2.0.12 在 Kubernetes v1.29 完成 C04） |
+| containerd | 2.1.x | 作为当前基线持续回归 | stock `io.containerd.runc.v2` | 验证中（2.1.1+aiinfra：基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01；官方静态 2.1.9：PVC 持久化与 Pod 重建。直接降级到 1.6.28 不可复用运行中 2.1 状态） |
+| CPU 架构 | linux/amd64 | 每个 containerd 大版本至少一个基础组合 | stock `io.containerd.runc.v2` | 验证中（Kubernetes v1.29、containerd 2.1.1+aiinfra 基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01） |
 | CPU 架构 | linux/arm64 | 至少覆盖一个 Kubernetes/containerd 基础组合及一个设备组合 | stock `io.containerd.runc.v2` | 待验证 |
 | 操作系统/内核 | 主流发行版的 LTS 内核 | 每个新内核系列执行 OverlayFS 和恢复用例 | stock `io.containerd.runc.v2` | 待验证 |
-| OverlayFS 存储 | RWO block PVC + ext4 | 作为所有组合的首选基线 | stock `io.containerd.runc.v2` | 验证中（Kubernetes v1.29、containerd 2.1 基础功能与性能） |
+| OverlayFS 存储 | RWO block PVC + ext4 | 作为所有组合的首选基线 | stock `io.containerd.runc.v2` | 验证中（Kubernetes v1.29、containerd 2.1.1+aiinfra 基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01） |
 | OverlayFS 存储 | RWO block PVC + XFS | 单独确认 XFS/OverlayFS 所需 mount 与内核能力 | stock `io.containerd.runc.v2` | 待验证 |
 
 不把网络文件系统、RWX 多节点共享、非 `overlayfs` snapshotter 或 rootless 节点纳入本矩阵；它们超出
@@ -92,7 +92,7 @@ device plugin 版本均是独立组合。每个“待验证”行都应先确认
 
 | 类别 | 首批目标形态 | RootPV 验证方式 | 计划级别 | 当前状态 |
 | --- | --- | --- | --- | --- |
-| 标准 OCI runtime | runc / `io.containerd.runc.v2` | 完整正向 E2E 与恢复测试 | 发布阻塞 | 验证中（Kubernetes v1.29、containerd 2.1、amd64 基础功能与性能） |
+| 标准 OCI runtime | runc / `io.containerd.runc.v2` | 完整正向 E2E 与恢复测试 | 发布阻塞 | 验证中（Kubernetes v1.29、containerd 2.1.1+aiinfra、amd64 基础功能、性能与 rootfsd 重启） |
 | runc-v2 自定义 runtime | `BinaryName` 指向非 wrapper 的 delegate | 验证 adapter 发现、参数/信号/退出码、create/delete/state 和重启恢复 | 高 | 待验证 |
 | NVIDIA GPU | 整卡；MIG；有 vGPU 环境时单列 | GPU 分配、`nvidia-smi`/工作负载、持久化写入、重建与清理 | 高 | 待验证 |
 | AMD GPU/ROCm | 整卡；有切分能力时单列 | GPU 工作负载、设备节点/环境保留、持久化与清理 | 高 | 待验证 |
@@ -102,7 +102,7 @@ device plugin 版本均是独立组合。每个“待验证”行都应先确认
 | Ascend NPU 切分 | 虚拟 NPU、资源切分或调度插件形态 | 每种切分策略独立完成整套 NPU E2E，不从整卡结果推导 | 高 | 待验证 |
 | 其他 NPU/加速器 | 厂商 runtime 属于 runc-v2 BinaryName 模型 | 按“runc-v2 自定义 runtime + 设备 E2E”执行 | 中 | 待验证 |
 | Kata Containers | `io.containerd.kata.v2`，含 QEMU/Cloud Hypervisor 等可用后端 | RootPV opt-in 必须在准入/就绪阶段明确拒绝；未 opt-in Kata Pod 必须不受影响 | 发布阻塞的负向用例 | 不支持（架构边界） |
-| gVisor | runsc 独立 shim | RootPV opt-in 必须明确拒绝；未 opt-in gVisor Pod 必须不受影响 | 发布阻塞的负向用例 | 不支持（架构边界） |
+| gVisor | runsc 独立 shim | RootPV opt-in 必须明确拒绝；未 opt-in gVisor Pod 必须不受影响 | 发布阻塞的负向用例 | 不支持（架构边界；M01/M02 已验证） |
 | 其他 microVM/独立 shim | 非 `io.containerd.runc.v2` task shim | 作为不支持类型完成 fail-closed 回归；若要支持需独立 RFC | 观察 | 不支持（架构边界） |
 
 Kata、gVisor 和其他独立 task shim 的“通过”仅表示拒绝行为符合预期，不表示 RootPV 持久根目录能够在
@@ -139,7 +139,60 @@ Kata、gVisor 和其他独立 task shim 的“通过”仅表示拒绝行为符�
 每项至少连续执行三次；任一次失败必须保留脱敏日志、事件、mountinfo、containerd 配置摘要与 RootPV 状态
 以供分析。暂时无法解释的失败使该组合保持“验证中”或“待验证”，不能以重试成功替代根因结论。
 
-### 5.2 设备 runtime 的附加用例
+### 5.2 运行时变更、并发和卸载专项方案
+
+本节将 C06 至 C09 拆成可执行的演练。所有演练仅允许在已 cordon 的 canary 节点上执行；该节点不得承载
+业务 Pod、控制面组件或不可中断的存储工作负载。一次演练只改变一个变量，结束后必须恢复到开始时记录的
+版本、配置、节点标签和调度状态。
+
+#### 5.2.1 统一前置、证据和停止条件
+
+1. 固定 RootPV 镜像 digest、Chart 版本、测试镜像 digest、StorageClass、目标 RuntimeClass 和目标节点；
+   记录 Kubernetes、containerd、runc、内核、CSI 插件、CNI 插件和 kubelet 的精确版本。
+2. 为每轮创建独立命名空间和独立 RWO ext4 PVC。首次 Pod 写入唯一标记、文件校验和及时间戳；重建 Pod
+   必须读回该标记后再写入第二个标记。每轮结束删除命名空间并等待 PVC、PV、VolumeAttachment 和对应
+   mount 全部清理。
+3. 在变更节点前备份 containerd 二进制、service unit、drop-in、配置及其校验和，并记录
+   `mountinfo`、RootPV runtime state/lease、节点标签和 cordon 状态。备份和恢复文件不进入代码仓库。
+4. 采集 Pod events、controller/rootfsd 日志、`crictl ps`、containerd journal、CSI node plugin 日志和
+   变更前后配置 diff。记录中不得包含集群地址、账户、令牌或 kubeconfig。
+5. 若节点在预设超时内未 Ready、CSI 未 Ready、普通非 RootPV PVC 无法挂载，或出现无法清理的 RootPV
+   mount/lease，立即停止后续用例，删除测试资源并按备份恢复；该轮结果为失败，不以跳过检查换取通过。
+
+直接替换 containerd 二进制或重启 containerd 后，必须先运行普通 `emptyDir` Pod 和普通 PVC Pod 作为
+运行时/存储对照。在当前测试环境中，长时间运行的 CSI node plugin 在裸切换 containerd 后需要重建以刷新
+其 socket 和 mount namespace；只有该插件 Ready 且普通 PVC 成功挂载后，才可执行 RootPV 用例。该恢复步骤
+属于测试环境切换流程，不得把它误记为 RootPV 修复或兼容性结论。
+
+#### 5.2.2 演练矩阵
+
+| 编号 | 场景与变更 | 关键步骤 | 通过标准 | 清理与恢复 |
+| --- | --- | --- | --- | --- |
+| R01 | rootfsd 重启 | 运行 RootPV Pod 并写入标记；仅重启目标节点 rootfsd Pod；确认原 Pod 状态，再删除并重建 Pod | 原 Pod 不出现非预期重启；重建 Pod 读回并更新标记；无遗留 lease/mount | 删除命名空间，等待资源清理；无需改变 containerd |
+| R02 | containerd 服务重启 | 建立 RootPV Pod 和普通 PVC 对照 Pod；执行受控 `systemctl restart containerd`；等待 node、kubelet、CSI 和 rootfsd 恢复 | 普通 PVC 对照与 RootPV Pod 均可恢复或按预期被 kubelet 重建；RootPV 重建后读回标记；运行时 handler/config 未重复写入 | 删除命名空间；若 CSI 未恢复，重建其 node plugin 后再判定，并将该动作记录为环境恢复 |
+| R03 | 节点重启 | 建立同 R02 的两类 Pod；安全重启已 cordon 的节点；等待 SSH、node Ready、CSI、rootfsd 和 adapter-ready 标签恢复 | 节点恢复后普通 PVC 可挂载；RootPV Pod 读回并更新标记；无失联 VolumeAttachment、僵尸 task、mount 或 lease | 删除命名空间；核对节点仍处于原 cordon 状态 |
+| U01 | RootPV 升级/回滚 | 从固定稳定 Chart 升级至候选 Chart；等待 controller 与节点代理就绪；执行 C02/C04；再回滚至稳定 Chart 并重复 | 两次变更均不破坏已有持久根目录；handler 与 wrapper 配置保持单一、可用；普通 Pod 不被修改 | 删除命名空间；使用 `helm history`、values 与镜像 digest 归档证据 |
+| U02 | containerd 升级/回滚 | 按备份替换为候选的官方校验二进制和匹配配置；完成普通对照、CSI 检查和 C04；恢复原二进制/config 后重复对照 | 候选和恢复后的原版本均通过普通 PVC 与 RootPV C04；恢复后的版本、配置 checksum、drop-in 和 cordon 与开始一致 | 删除命名空间；还原备份；重建 CSI node plugin 并确认 Ready |
+| C07-A | 独立根文件系统并发 | 并发创建至少 10 个 Pod，每个 Pod 使用独立 PVC 和独立 `rootfs-path`；同时写入不同标记并各自重建 | 所有 Pod 只读取自己的标记；无串写、错误 lease、泄漏 mount 或未释放 VolumeAttachment | 删除命名空间并等待所有存储资源回收；保存并发窗口内的 rootfsd 日志 |
+| C07-B | 同一根文件系统互斥 | 针对同一 PVC 和同一 `rootfs-path` 并发提交两个 opt-in Pod | 两个 Pod 不得同时 Ready 并写入同一 persistent rootfs；第二个请求必须被拒绝、保持未就绪或在规定超时内失败，并有可诊断原因 | 删除两个 Pod 和 PVC；确认失败请求没有遗留状态 |
+| U03 | RootPV 卸载 | 先确认集群中不存在 opt-in Pod、RootPV mount 或活跃 lease；卸载 Chart；等待 controller/agent 资源消失；创建普通 Pod 和普通 PVC 对照 | 普通工作负载正常；containerd 配置不再含 RootPV handler；不存在 RootPV RuntimeClass、socket、状态目录或遗留 mount；不能在仍有 opt-in Pod 时静默卸载 | 若卸载失败，恢复原 Chart/values；完成清理后才允许结束演练 |
+
+R02、R03 和 U02 不要求原容器进程保持 PID 不变：containerd 或节点重启后由 kubelet 重建容器是允许的。
+它们的核心断言是普通工作负载恢复、持久根目录内容正确、RootPV 状态可清理，以及宿主机不残留资源。
+
+#### 5.2.3 执行顺序与自动化边界
+
+先执行 R01，再依次执行 R02、R03、C07-A、C07-B、U01、U02、U03。R02/R03/U02 每次均先执行普通
+PVC 对照；U03 必须最后执行，并使用专用短生命周期测试安装，不能在共享或生产安装上执行。每项连续成功
+三轮才可将对应组合标记为“已验证”；首次失败即停止该组合并创建脱敏故障记录。
+
+后续测试脚本应以 `.env` 中的 `TARGET_NODE_SELECTOR`、`ROOTPV_RELEASE`、`ROOTPV_CHART`、
+`ROOTPV_IMAGE`、`STABLE_*`、`CANDIDATE_*`、`STORAGE_CLASS`、`PARALLEL_PODS`、超时和恢复命令为
+输入。脚本必须提供 `--dry-run`、唯一测试前缀、trap 清理、资源清单和 `--keep-artifacts-on-failure`；不得
+硬编码 SSH 地址、节点名、镜像仓库或集群专有路径。涉及 SSH/reboot/containerd 二进制替换/Helm uninstall
+的步骤默认要求显式开关，避免 CI 或误操作触发节点级变更。
+
+### 5.3 设备 runtime 的附加用例
 
 | 编号 | 用例 | 通过标准 |
 | --- | --- | --- |
@@ -150,7 +203,7 @@ Kata、gVisor 和其他独立 task shim 的“通过”仅表示拒绝行为符�
 | D05 | 故障清理 | 删除/强制删除后设备资源可重新分配，且 RootPV 无残留 mount 或 lease |
 | D06 | 切分隔离 | 对 MIG、vGPU、虚拟 NPU 等形态，分别验证资源边界、重建和其他切分实例不受影响 |
 
-### 5.3 microVM 与独立 shim 的负向用例
+### 5.4 microVM 与独立 shim 的负向用例
 
 | 编号 | 用例 | 通过标准 |
 | --- | --- | --- |

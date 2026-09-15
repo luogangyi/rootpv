@@ -44,10 +44,18 @@ RootPV 仅使用 Kubernetes、containerd、OCI runtime-spec 和 Linux VFS 的公
 
 首个版本不支持：非 containerd 运行时、非 `overlayfs` snapshotter、rootless 或非特权节点安装、一个根文件系统的读写共享、跨镜像链自动 Reset/Rebase，以及将可写层自动转换为 OCI 镜像。
 
-当前端到端测试仅覆盖 Linux x86_64、Kubernetes v1.29 系列、原生 containerd 2.1、
-`io.containerd.runc.v2` 运行时，以及动态供给的 ReadWriteOnce 块存储 PVC。其他容器运行时、
-snapshotter、CPU 架构、存储后端、节点重启/故障恢复和设备专用运行时，尚未完成同等范围的端到端
-验证。镜像可以构建为某一架构，并不等同于该架构已进入验证过的兼容范围。
+完整端到端基线覆盖 Linux x86_64、Kubernetes v1.29 系列、containerd 2.1.1+aiinfra、
+`io.containerd.runc.v2` 运行时，以及动态供给的 ReadWriteOnce 块存储 PVC。在相同平台上，官方
+containerd 1.6.39、1.7.35、2.0.12 和静态 2.1.9 已额外完成动态 PVC 持久化与 Pod 重建验证；这些版本检查
+尚未覆盖完整的恢复、升级、并发和性能用例。当前基线还完成了 rootfsd 与 containerd 服务重启各 3 轮、
+节点重启 3 轮、10 实例并发隔离、同一路径互斥，以及 RootPV Helm 升级/回滚验证。
+
+不支持将运行中的 containerd 2.1 状态直接降级为 1.6：候选 1.6.28 可以启动，但不能重用 2.1 的运行时
+状态。跨大版本回退应在排空节点后按受控迁移流程重建运行时状态。当前 Helm 卸载会停止 RootPV 节点代理，
+但不会自动移除已写入 containerd 配置的 RootPV runtime handler；该卸载清理能力仍待补充。
+
+其他容器运行时、snapshotter、CPU 架构、存储后端、节点重启/故障恢复和设备专用运行时，尚未完成
+同等范围的端到端验证。镜像可以构建为某一架构，并不等同于该架构已进入验证过的兼容范围。
 
 ## 兼容性验证矩阵
 
@@ -56,14 +64,14 @@ snapshotter、CPU 架构、存储后端、节点重启/故障恢复和设备专�
 
 | 维度 | 组合或范围 | 已验证 | 未验证 |
 | --- | --- | --- | --- |
-| 基线平台 | linux/amd64；Kubernetes v1.29 系列；containerd 2.1；`overlayfs`；原生 `io.containerd.runc.v2`；ext4 的 RWO 块存储 PVC | 功能和性能 E2E | 恢复/节点重启、升级/回滚、并发和卸载 |
-| Kubernetes 与 containerd | Kubernetes v1.27、v1.28、v1.30 及后续受支持系列；containerd 1.6、1.7、2.0 和其他 2.1 组合 | — | 表中全部配对 |
+| 基线平台 | linux/amd64；Kubernetes v1.29 系列；containerd 2.1.1+aiinfra；`overlayfs`；原生 `io.containerd.runc.v2`；ext4 的 RWO 块存储 PVC | 功能和性能 E2E；rootfsd、containerd 服务和节点重启各连续 3 轮；10 实例并发隔离；同路径单写互斥；RootPV Helm 升级/回滚 | 跨 containerd 大版本的受控迁移；卸载后自动清理节点 runtime handler |
+| Kubernetes 与 containerd | Kubernetes v1.27、v1.28、v1.30 及后续受支持系列；containerd 1.6、1.7、2.0 和其他 2.1 组合 | Kubernetes v1.29 + 官方 containerd 1.6.39、1.7.35、2.0.12 和静态 2.1.9：动态 PVC 持久化与 Pod 重建 | 其他全部配对；官方构建上的恢复、升级和性能 |
 | CPU 架构与内核 | linux/arm64 及其他受支持 Linux 内核/发行版组合 | — | 基线用例与 OverlayFS 恢复覆盖 |
 | 存储 | XFS 的 RWO 块存储 PVC | — | OverlayFS 挂载、持久化和清理覆盖 |
 | runc-v2 adapter | `BinaryName` delegate 非 wrapper 的自定义 `io.containerd.runc.v2` runtime | — | adapter 发现、生命周期、信号、退出码和恢复 |
 | GPU runtime | NVIDIA（环境具备时分别覆盖 MIG/vGPU）、AMD ROCm、Intel 和 MThreads | — | 设备工作负载、持久化、清理和各设备切分形态 |
 | NPU runtime | Ascend 及其他 runc-v2 兼容加速器；整卡和虚拟/切分形态分别记录 | — | 厂商工作负载、持久化、清理和隔离 |
-| Kata、gVisor 与其他独立 shim | `io.containerd.kata.v2`、runsc 和非 runc-v2 的 microVM/shim runtime | — | RootPV 工作负载在当前架构下不支持；待补充明确拒绝行为回归 |
+| Kata、gVisor 与其他独立 shim | `io.containerd.kata.v2`、runsc 和非 runc-v2 的 microVM/shim runtime | gVisor：RootPV opt-in 被拒绝；普通 gVisor Pod 正常运行且未被 RootPV 修改 | Kata 与其他独立 shim；RootPV 工作负载在当前架构下仍不支持 |
 
 测试用例、验收标准和待寻找的环境见[兼容性验证方案与详细矩阵](docs/design/04-compatibility-validation-plan.md)。
 
