@@ -46,6 +46,137 @@ func TestReconcilerReacquiresCreatedLeaseBeforeSuccess(t *testing.T) {
 	}
 }
 
+func TestReconcilerCleansStoppedDelegatedRootfs(t *testing.T) {
+	runtimeRoot := filepath.Join(t.TempDir(), "runtime")
+	rootPath := filepath.Join(t.TempDir(), "persistent")
+	old := NewLeaseManager("node-1", nil)
+	lease := acquireRecoveryLease(t, old, rootPath, "container-id")
+	state := rootfsstate.State{
+		FormatVersion:        rootfsstate.FormatDelegationV1,
+		ContainerID:          "container-id",
+		LeaseID:              lease.LeaseID,
+		Phase:                rootfsstate.PhaseCreated,
+		MetaDir:              filepath.Join(rootPath, "meta"),
+		MergedDir:            filepath.Join(runtimeRoot, "container-id", "merged"),
+		RootfsEnabled:        true,
+		DelegateBinary:       "/delegate/runc",
+		RuntimeAdapterID:     "runc-v2",
+		RuntimeAdapterMode:   "Explicit",
+		RootfsHandler:        "persistent-rootfs-runc-v2",
+		RuntimeType:          "io.containerd.runc.v2",
+		ClusterAdapterDigest: "sha256:cluster",
+		NodeResolvedDigest:   "sha256:node",
+	}
+	if err := rootfsstate.Save(runtimeRoot, state.ContainerID, state); err != nil {
+		t.Fatal(err)
+	}
+	abandonLease(t, old, lease.LeaseID)
+
+	cleaner := &fakeRecoveryCleaner{}
+	reconciler := Reconciler{
+		RuntimeRoot: runtimeRoot,
+		Leases:      NewLeaseManager("node-1", nil),
+		Processes:   fakeProcessChecker{},
+		Runtime:     fakeRuntimeStateChecker{},
+		Cleaner:     cleaner,
+	}
+	if err := reconciler.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if cleaner.calls != 1 {
+		t.Fatalf("expected delegated rootfs cleanup, got %d calls", cleaner.calls)
+	}
+	if _, err := os.Stat(rootfsstate.Path(runtimeRoot, state.ContainerID)); !os.IsNotExist(err) {
+		t.Fatalf("delegated state was not removed: %v", err)
+	}
+}
+
+func TestReconcilerRetainsRunningDelegatedRootfs(t *testing.T) {
+	runtimeRoot := filepath.Join(t.TempDir(), "runtime")
+	rootPath := filepath.Join(t.TempDir(), "persistent")
+	old := NewLeaseManager("node-1", nil)
+	lease := acquireRecoveryLease(t, old, rootPath, "container-id")
+	state := rootfsstate.State{
+		FormatVersion:        rootfsstate.FormatDelegationV1,
+		ContainerID:          "container-id",
+		LeaseID:              lease.LeaseID,
+		Phase:                rootfsstate.PhaseCreated,
+		MetaDir:              filepath.Join(rootPath, "meta"),
+		MergedDir:            filepath.Join(runtimeRoot, "container-id", "merged"),
+		RootfsEnabled:        true,
+		DelegateBinary:       "/delegate/runc",
+		RuntimeAdapterID:     "runc-v2",
+		RuntimeAdapterMode:   "Explicit",
+		RootfsHandler:        "persistent-rootfs-runc-v2",
+		RuntimeType:          "io.containerd.runc.v2",
+		ClusterAdapterDigest: "sha256:cluster",
+		NodeResolvedDigest:   "sha256:node",
+	}
+	if err := rootfsstate.Save(runtimeRoot, state.ContainerID, state); err != nil {
+		t.Fatal(err)
+	}
+	abandonLease(t, old, lease.LeaseID)
+
+	cleaner := &fakeRecoveryCleaner{}
+	reconciler := Reconciler{
+		RuntimeRoot: runtimeRoot,
+		Leases:      NewLeaseManager("node-1", nil),
+		Processes:   fakeProcessChecker{},
+		Runtime:     fakeRuntimeStateChecker{running: true},
+		Cleaner:     cleaner,
+	}
+	if err := reconciler.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if cleaner.calls != 0 {
+		t.Fatalf("running delegated rootfs was cleaned")
+	}
+	if _, err := os.Stat(rootfsstate.Path(runtimeRoot, state.ContainerID)); err != nil {
+		t.Fatalf("running delegated state was removed: %v", err)
+	}
+}
+
+func TestReconcilerCleansDelegatedStateWhenLeaseMetadataIsGone(t *testing.T) {
+	runtimeRoot := filepath.Join(t.TempDir(), "runtime")
+	state := rootfsstate.State{
+		FormatVersion:        rootfsstate.FormatDelegationV1,
+		ContainerID:          "container-id",
+		LeaseID:              "missing-lease",
+		Phase:                rootfsstate.PhaseCreated,
+		MetaDir:              filepath.Join(t.TempDir(), "missing-meta"),
+		MergedDir:            filepath.Join(runtimeRoot, "container-id", "merged"),
+		RootfsEnabled:        true,
+		DelegateBinary:       "/delegate/runc",
+		RuntimeAdapterID:     "runc-v2",
+		RuntimeAdapterMode:   "Explicit",
+		RootfsHandler:        "persistent-rootfs-runc-v2",
+		RuntimeType:          "io.containerd.runc.v2",
+		ClusterAdapterDigest: "sha256:cluster",
+		NodeResolvedDigest:   "sha256:node",
+	}
+	if err := rootfsstate.Save(runtimeRoot, state.ContainerID, state); err != nil {
+		t.Fatal(err)
+	}
+
+	cleaner := &fakeRecoveryCleaner{}
+	reconciler := Reconciler{
+		RuntimeRoot: runtimeRoot,
+		Leases:      NewLeaseManager("node-1", nil),
+		Processes:   fakeProcessChecker{},
+		Runtime:     fakeRuntimeStateChecker{},
+		Cleaner:     cleaner,
+	}
+	if err := reconciler.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if cleaner.calls != 1 {
+		t.Fatalf("expected stale delegated cleanup, got %d calls", cleaner.calls)
+	}
+	if _, err := os.Stat(rootfsstate.Path(runtimeRoot, state.ContainerID)); !os.IsNotExist(err) {
+		t.Fatalf("stale delegated state was not removed: %v", err)
+	}
+}
+
 func TestReconcilerCleansDeadOwnerOnlyAfterAllLeasesRecovered(t *testing.T) {
 	runtimeRoot := filepath.Join(t.TempDir(), "runtime")
 	rootPath := filepath.Join(t.TempDir(), "persistent")
@@ -250,6 +381,15 @@ func TestReconcilerCleansReleasedStateDespiteOtherRecoveryFailure(t *testing.T) 
 
 type fakeProcessChecker struct {
 	alive map[rootfsstate.ProcessIdentity]bool
+}
+
+type fakeRuntimeStateChecker struct {
+	running bool
+	err     error
+}
+
+func (c fakeRuntimeStateChecker) Running(context.Context, rootfsstate.State) (bool, error) {
+	return c.running, c.err
 }
 
 func (c fakeProcessChecker) Alive(identity rootfsstate.ProcessIdentity) bool {
