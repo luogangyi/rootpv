@@ -91,6 +91,8 @@ test cases, acceptance criteria, and planned environment coverage.
 
 RootPV keys and API groups use openfuyao.cn. For an existing installation, follow the
 [domain migration guide](docs/user-guide/domain-migration.md) before updating components or workloads.
+The new domain passed [limited runc/Kata cluster smoke tests](tests/e2e/results/domain-smoke-2026-10-14.md)
+on Kubernetes v1.37.1 with ext4 local PVCs; the record does not establish full platform compatibility.
 
 ### Prerequisites
 

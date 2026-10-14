@@ -7,7 +7,8 @@
 **适用版本：** 当前源码；Kata + QEMU 实现见 lgy/kata-qemu 的 33c9c36
 
 openfuyao.cn 域名迁移已完成 [本地冒烟](../../tests/e2e/results/domain-migration-2026-10-14.md)。
-目标集群正在维护，新域名的集群冒烟尚未执行；既有记录对应各自标明的实现版本。
+维护结束后已完成 [v1.37.1 新域名集群冒烟](../../tests/e2e/results/domain-smoke-2026-10-14.md)，
+仅覆盖记录中的 runc/Kata 用例，不替代完整发布要求；既有记录对应各自标明的实现版本。
 
 ## 1. 目的与原则
 
@@ -77,6 +78,7 @@ device plugin 的精确版本。
 | Kubernetes | v1.29 系列 | 基线组合；覆盖当前 E2E 场景 | stock `io.containerd.runc.v2` | 验证中（2.1.1（厂商构建）：基础功能、性能、R01/R02/R03 各连续 3 轮、C07 并发与互斥、U01 Helm 升级/回滚；官方 1.6.39、1.7.35、2.0.12 和静态 2.1.9 已完成 C04） |
 | Kubernetes | v1.30 系列 | 选择一个受支持的 containerd 1.7/2.0 组合 | stock `io.containerd.runc.v2` | 待验证 |
 | Kubernetes / Kata 功能组合 | v1.34.3（厂商构建） + containerd 2.1.1 + amd64 + ext4 local PVC | QEMU task adapter 的独立功能路径 | Kata 4.2.0 Rust + QEMU 11.0.1 | 已验证（限定用例）：见 [2026-10-14 记录](../../tests/e2e/results/kata-qemu-2026-10-14.md)，不替代完整 C01–C10 |
+| Kubernetes / 新域名冒烟 | v1.37.1 + containerd 2.1.1 + amd64 + ext4 local PVC | openfuyao.cn 下的启动、重建、sidecar、准入和清理 | runc-v2 与 Kata 4.2.0 Rust + QEMU 11.0.1 | 已验证（限定用例）：见 [迁移后冒烟](../../tests/e2e/results/domain-smoke-2026-10-14.md)，不替代完整 C/R/U 或网络验证 |
 | Kubernetes | v1.31 及后续受支持系列 | 每新增一个项目支持的 Kubernetes minor 至少选择一个组合 | stock `io.containerd.runc.v2` | 待验证 |
 | containerd | 1.6.x | 在一个受支持 Kubernetes 版本上完整验证 | stock `io.containerd.runc.v2` | 验证中（官方 1.6.39 在 Kubernetes v1.29 完成 C04；切换后先重建节点 CSI 插件 Pod） |
 | containerd | 1.7.x | 在两个不同 Kubernetes minor 上完整验证 | stock `io.containerd.runc.v2` | 验证中（官方 1.7.35 在 Kubernetes v1.29 完成 C04） |

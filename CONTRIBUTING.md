@@ -53,6 +53,11 @@ The utility skips itself, binary files, symlinks, ignored files and untracked lo
 private deployment/test copies separately. See the [domain migration guide](docs/user-guide/domain-migration.md)
 before upgrading an existing installation.
 
+Before publishing E2E evidence, anonymize cluster/node names, private endpoints and registries, topology,
+and vendor build identifiers. Retain relevant version families, vendor-build qualifiers, architecture,
+storage semantics, test cases and outcomes; keep raw logs and the environment mapping private.
+Audit every unpublished PR commit, since removing an identifier in a later commit leaves it in history.
+
 ## Commit and review expectations
 
 - Use clear, imperative commit subjects.

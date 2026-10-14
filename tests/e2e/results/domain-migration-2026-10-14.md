@@ -1,5 +1,8 @@
 # openfuyao.cn 域名迁移本地冒烟
 
+后续维护结束后已完成 [集群冒烟](domain-smoke-2026-10-14.md)。本文保留维护期间的本地执行记录。
+PR 发布前另检查了 JSONPath 的一层/两层点转义，补齐遗漏引用并通过实际 client-go 解析器验证。
+
 - 日期：2026-10-14。
 - 分支：lgy/kata-qemu；基于 2ce9513 的域名迁移改动。
 - 执行平台：macOS ARM64，Go 1.24.0，Python 3.13.12，Helm 4.1.4。
@@ -39,7 +42,7 @@ bash -n scripts/*.sh tests/e2e/*.sh tests/e2e/lib/*.sh
 git diff --check
 ```
 
-## 集群冒烟待办
+## 当时的集群冒烟计划
 
 维护结束后，用当前版本组件和新域名部署到隔离 namespace/节点，验证：
 

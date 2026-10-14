@@ -92,12 +92,15 @@ Kata 性能基线仍待专门验证：两条路径都须使用同一原 QEMU Run
 ## 结果索引
 
 域名迁移后的检查见 [2026-10-14 本地冒烟](results/domain-migration-2026-10-14.md)。
-目标环境正在维护，此轮未执行新域名集群冒烟；此前 Kata 记录对应迁移前的实现。
+维护结束后已在 Kubernetes v1.37.1 完成 [新域名集群冒烟](results/domain-smoke-2026-10-14.md)，
+覆盖 runc 与 Kata 的启动、持久化重建、sidecar、普通 Kata、非法注解及清理。
+此前 Kata 记录对应迁移前的实现。
 
 | 组合 | 证据与范围 |
 | --- | --- |
 | Kubernetes v1.29 / containerd 2.1 / runc / 动态块 PVC | [功能](results/functional-2026-09-14.md)、[性能](results/performance-2026-09-14.md) |
 | 官方 containerd 多版本 / runc | [兼容性](results/compatibility-2026-09-14.md)；仅覆盖记录中的用例 |
+| Kubernetes v1.37.1 / 新域名 / runc + Kata QEMU / ext4 local PVC | [迁移后冒烟](results/domain-smoke-2026-10-14.md)：启动、重建、sidecar、准入与清理；不含完整兼容性矩阵 |
 | runc 恢复、互斥和升级 | [专项验证](results/special-validation-2026-09-15.md) |
 | Kubernetes v1.34.3 / containerd 2.1.1 / Kata 4.2.0 Rust / QEMU 11.0.1 / ext4 local PVC | [Kata 功能](results/kata-qemu-2026-10-14.md)：重建、sidecar、互斥、rootfsd 重启、普通 Kata 与清理 |
 

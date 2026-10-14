@@ -87,6 +87,8 @@ QEMU 11.0.1 和 ext4 local RWO PVC，已覆盖持久化、sidecar、单写互斥
 
 RootPV 的协议键与 API group 使用 openfuyao.cn。已有安装升级前，请先阅读
 [域名迁移指南](docs/user-guide/domain-migration.md)，同步更新组件、节点配置和业务 YAML。
+新域名已在 Kubernetes v1.37.1、ext4 local PVC 上通过 [runc/Kata 限定冒烟](tests/e2e/results/domain-smoke-2026-10-14.md)，
+该记录不代表完成整个平台兼容性验证。
 
 ### 前提条件
 
