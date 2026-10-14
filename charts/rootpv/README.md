@@ -6,11 +6,14 @@
 
 ## 安装
 
+当前 annotation、label 和 CRD/RBAC 使用 openfuyao.cn；旧安装升级见
+[域名迁移指南](../../docs/user-guide/domain-migration.md)。
+
 使用包含当前实现的 RootPV 镜像；Kata 接入需要镜像中存在
 /usr/local/bin/containerd-shim-rootpv-kata-v2。源码构建见 [部署指南](../../docs/user-guide/deployment.md)。
 
 ```bash
-kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
+kubectl label node <node-name> openfuyao.cn/persistent-rootfs=true --overwrite
 
 helm upgrade --install rootpv charts/rootpv \
   --namespace rootpv-system \
@@ -30,7 +33,7 @@ rootpv-runtime-adapters.yaml 和 rootfs-runtime-wrapper.yaml。
 | --- | --- | --- |
 | image.repository / image.tag | Controller、agent 和 installer 的同一 RootPV 镜像 | rootpv / latest |
 | runtimeAdapterDiscovery.enabled | 自动发现源 handler 并生成 catalog、Shadow RuntimeClass 与节点 registry | true |
-| nodeAgent.nodeSelector | 选择安装 RootPV 的节点 | ecloud.com/persistent-rootfs=true |
+| nodeAgent.nodeSelector | 选择安装 RootPV 的节点 | openfuyao.cn/persistent-rootfs=true |
 | nodeAgent.overlayMode | 持久化 Overlay 模式；Kata 要求 flat-lowerdirs | flat-lowerdirs |
 | nodeAgent.kubeletRoot | shim 和 agent 使用的真实 kubelet 路径 | /var/lib/kubelet |
 | nodeAgent.hostPaths.kubelet | kubelet 宿主机目录挂载来源，应匹配 kubeletRoot | /var/lib/kubelet |
@@ -77,10 +80,10 @@ rootfsd、Controller 和 installer 应使用同一版本镜像。仅启用 disco
 ```bash
 kubectl -n rootpv-system rollout status deploy/persistent-rootfs-controller --timeout=180s
 kubectl -n rootpv-system rollout status ds/persistent-rootfsd --timeout=180s
-kubectl get runtimeclass -l ecloud.com/managed-by=rootpv
+kubectl get runtimeclass -l openfuyao.cn/managed-by=rootpv
 kubectl -n rootpv-system get configmap rootpv-runtime-adapters -o yaml
-kubectl get nodes -L ecloud.com/persistent-rootfs-ready \
-  -L ecloud.com/rootpv-adapter-kata-qemu-v2
+kubectl get nodes -L openfuyao.cn/persistent-rootfs-ready \
+  -L openfuyao.cn/rootpv-adapter-kata-qemu-v2
 helm -n rootpv-system status rootpv
 ```
 

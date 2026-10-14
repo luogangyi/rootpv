@@ -40,6 +40,19 @@ outside versioned sources.
 Check local Markdown links, fence/table formatting, YAML and shell syntax, and Helm rendering for changes to
 documentation or examples. New full Go runs are needed when behavior changes, not for prose-only edits.
 
+RootPV annotations, labels, webhook names and CRD/RBAC use the openfuyao.cn domain. Use the tracked-file
+replacement utility to keep code, manifests, tests and documentation aligned:
+
+```bash
+python3 scripts/replace-domain.py          # preview
+python3 scripts/replace-domain.py --apply  # replace the legacy domain
+python3 scripts/replace-domain.py --check  # fail if any tracked reference remains
+```
+
+The utility skips itself, binary files, symlinks, ignored files and untracked local configuration. Update
+private deployment/test copies separately. See the [domain migration guide](docs/user-guide/domain-migration.md)
+before upgrading an existing installation.
+
 ## Commit and review expectations
 
 - Use clear, imperative commit subjects.

@@ -12,4 +12,4 @@ metadata:
   name: ai-dev
   labels:
     app.kubernetes.io/part-of: rootpv
-    ecloud.com/persistent-rootfs-enabled: "true"
+    openfuyao.cn/persistent-rootfs-enabled: "true"

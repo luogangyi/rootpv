@@ -134,7 +134,7 @@ flowchart TB
 建议使用版本化配置：
 
 ```yaml
-apiVersion: ecloud.com/v1alpha1
+apiVersion: openfuyao.cn/v1alpha1
 runtimeAdapters:
   - id: nvidia-v1
     mode: Explicit
@@ -214,12 +214,12 @@ reinvocationPolicy: IfNeeded
 新增或规范以下 annotation：
 
 ```text
-ecloud.com/original-runtime-class
-ecloud.com/effective-runtime-class
-ecloud.com/runtime-adapter-id
-ecloud.com/runtime-adapter-mode
-ecloud.com/runtime-adapter-config-hash
-ecloud.com/persistent-rootfs-mutated
+openfuyao.cn/original-runtime-class
+openfuyao.cn/effective-runtime-class
+openfuyao.cn/runtime-adapter-id
+openfuyao.cn/runtime-adapter-mode
+openfuyao.cn/runtime-adapter-config-hash
+openfuyao.cn/persistent-rootfs-mutated
 ```
 
 约束：
@@ -295,7 +295,7 @@ metadata:
 handler: persistent-rootfs-node-default
 scheduling:
   nodeSelector:
-    ecloud.com/rootpv-node-default-ready: "true"
+    openfuyao.cn/rootpv-node-default-ready: "true"
 ```
 
 每个节点生成同名 containerd handler，但 handler 内容可根据本节点 default runtime 不同而不同：
@@ -304,8 +304,8 @@ scheduling:
 [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.persistent-rootfs-node-default]
   runtime_type = "io.containerd.runc.v2"
   snapshotter = "overlayfs"
-  pod_annotations = ["ecloud.com/*"]
-  container_annotations = ["ecloud.com/*"]
+  pod_annotations = ["openfuyao.cn/*"]
+  container_annotations = ["openfuyao.cn/*"]
 
   [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.persistent-rootfs-node-default.options]
     BinaryName = "/usr/local/bin/rootfs-runtime-wrapper"
@@ -335,7 +335,7 @@ fixedDefaultAdapter: runc-v1
 节点只有同时满足以下条件时才能发布：
 
 ```text
-ecloud.com/rootpv-node-default-ready=true
+openfuyao.cn/rootpv-node-default-ready=true
 ```
 
 - 成功解析 containerd `default_runtime_name`；

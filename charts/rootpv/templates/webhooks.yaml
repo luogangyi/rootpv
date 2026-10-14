@@ -45,7 +45,7 @@ metadata:
   labels:
 {{ include "rootpv.labels" . | nindent 4 }}
 webhooks:
-- name: mpod.persistent-rootfs.ecloud.com
+- name: mpod.persistent-rootfs.openfuyao.cn
   admissionReviewVersions:
   - v1
   sideEffects: None
@@ -82,7 +82,7 @@ metadata:
   labels:
 {{ include "rootpv.labels" . | nindent 4 }}
 webhooks:
-- name: vpod.persistent-rootfs.ecloud.com
+- name: vpod.persistent-rootfs.openfuyao.cn
   admissionReviewVersions:
   - v1
   sideEffects: None

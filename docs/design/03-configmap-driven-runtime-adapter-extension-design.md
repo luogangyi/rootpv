@@ -268,8 +268,8 @@ node-agent 把有限大小的 inventory 写到自身 Node annotation：
 ```yaml
 metadata:
   annotations:
-    ecloud.com/rootpv-runtime-inventory-version: rootpv-runtime-inventory-v1
-    ecloud.com/rootpv-runtime-inventory: |
+    openfuyao.cn/rootpv-runtime-inventory-version: rootpv-runtime-inventory-v1
+    openfuyao.cn/rootpv-runtime-inventory: |
       {
         "nodeUID": "...",
         "containerdConfigDigest": "sha256:...",
@@ -325,9 +325,9 @@ metadata:
   name: rootpv-runtime-adapters
   namespace: rootpv-system
   labels:
-    ecloud.com/managed-by: rootpv
+    openfuyao.cn/managed-by: rootpv
   annotations:
-    ecloud.com/generated: "true"
+    openfuyao.cn/generated: "true"
 data:
   catalog.yaml: |
     formatVersion: rootpv-runtime-catalog-v1
@@ -380,12 +380,12 @@ kind: RuntimeClass
 metadata:
   name: persistent-rootfs-ascend
   labels:
-    ecloud.com/managed-by: rootpv
-    ecloud.com/runtime-adapter-id: ascend-runc-v2
+    openfuyao.cn/managed-by: rootpv
+    openfuyao.cn/runtime-adapter-id: ascend-runc-v2
 handler: persistent-rootfs-ascend-runc-v2
 scheduling:
   nodeSelector:
-    ecloud.com/rootpv-adapter-ascend-runc-v2: d1c8f10e1262a930
+    openfuyao.cn/rootpv-adapter-ascend-runc-v2: d1c8f10e1262a930
 ```
 
 如果原 RuntimeClass 已有 scheduling，则合并而不是覆盖。selector 冲突时不生成 route，并发布明确事件。
@@ -468,14 +468,14 @@ adapters:
 删除 `LabelRuntimeRunc`、`LabelRuntimeNvidia`、`LabelRuntimeAscend` 等固定 Go 常量，统一生成：
 
 ```text
-ecloud.com/rootpv-adapter-<adapter-id>=<cluster-digest-label>
+openfuyao.cn/rootpv-adapter-<adapter-id>=<cluster-digest-label>
 ```
 
 例如：
 
 ```text
-ecloud.com/rootpv-adapter-runc-v2=d71a12c06cb4a321
-ecloud.com/rootpv-adapter-ascend-runc-v2=d1c8f10e1262a930
+openfuyao.cn/rootpv-adapter-runc-v2=d71a12c06cb4a321
+openfuyao.cn/rootpv-adapter-ascend-runc-v2=d1c8f10e1262a930
 ```
 
 RuntimeClass selector 使用相同 digest value，旧配置节点不会被新 catalog 调度。
@@ -587,22 +587,22 @@ kubectl -n rootpv-system get configmap rootpv-runtime-adapters -o yaml
 查询自动生成的 Shadow RuntimeClass：
 
 ```bash
-kubectl get runtimeclass -l ecloud.com/managed-by=rootpv
+kubectl get runtimeclass -l openfuyao.cn/managed-by=rootpv
 ```
 
 查询某 adapter 已在哪些节点完成收敛：
 
 ```bash
 kubectl get nodes \
-  -L ecloud.com/rootpv-adapter-runc-v2 \
-  -L ecloud.com/rootpv-adapter-ascend-runc-v2
+  -L openfuyao.cn/rootpv-adapter-runc-v2 \
+  -L openfuyao.cn/rootpv-adapter-ascend-runc-v2
 ```
 
 查询某个节点的原始发现结果：
 
 ```bash
 kubectl get node <node> \
-  -o jsonpath='{.metadata.annotations.ecloud\.com/rootpv-runtime-inventory}'
+  -o jsonpath='{.metadata.annotations.openfuyao\.cn/rootpv-runtime-inventory}'
 ```
 
 不存在代码内置的“厂商 runtime 固定列表”。列表完全来自集群实际 RuntimeClass 和节点实际 containerd 配置。
@@ -620,7 +620,7 @@ kubectl get node <node> \
 ```yaml
 metadata:
   annotations:
-    ecloud.com/rootpv-auto-adapter: disabled
+    openfuyao.cn/rootpv-auto-adapter: disabled
 ```
 
 controller 不为它生成 route。该开关用于暂时排除尚未完成 E2E 的 runtime。
@@ -648,7 +648,7 @@ runtimeAdapterDiscovery:
 自动发现表示“技术上兼容并可配置”，不等于“厂商用户态已经完成生产认证”。可选地让 controller 给 route 标记：
 
 ```text
-ecloud.com/rootpv-validation-status=discovered|validated
+openfuyao.cn/rootpv-validation-status=discovered|validated
 ```
 
 默认策略可以是：

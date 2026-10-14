@@ -59,7 +59,7 @@ nodeAgent:
   allowedOverlaySnapshotRoots:
   - /var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots
   nodeSelector:
-    ecloud.com/persistent-rootfs: "true"
+    openfuyao.cn/persistent-rootfs: "true"
   tolerations:
   - operator: Exists
   resources: {}

@@ -147,7 +147,7 @@ func (r Reconciler) createCatalog(ctx context.Context, data []byte) error {
 
 func (r Reconciler) updateCatalog(ctx context.Context, existing *corev1.ConfigMap, data []byte) error {
 	existing.Labels = mergeStringMap(existing.Labels, map[string]string{config.RuntimeCatalogManagedByLabel: config.RuntimeCatalogManagedByValue})
-	existing.Annotations = mergeStringMap(existing.Annotations, map[string]string{"ecloud.com/generated": "true"})
+	existing.Annotations = mergeStringMap(existing.Annotations, map[string]string{"openfuyao.cn/generated": "true"})
 	existing.Data = map[string]string{config.RuntimeCatalogDataKey: string(data)}
 	_, err := r.Client.CoreV1().ConfigMaps(r.Namespace).Update(ctx, existing, metav1.UpdateOptions{})
 	return err
@@ -155,7 +155,7 @@ func (r Reconciler) updateCatalog(ctx context.Context, existing *corev1.ConfigMa
 
 func newRuntimeCatalogConfigMap(data []byte) *corev1.ConfigMap {
 	return &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: config.RuntimeCatalogConfigMapName, Labels: map[string]string{config.RuntimeCatalogManagedByLabel: config.RuntimeCatalogManagedByValue}, Annotations: map[string]string{"ecloud.com/generated": "true"}},
+		ObjectMeta: metav1.ObjectMeta{Name: config.RuntimeCatalogConfigMapName, Labels: map[string]string{config.RuntimeCatalogManagedByLabel: config.RuntimeCatalogManagedByValue}, Annotations: map[string]string{"openfuyao.cn/generated": "true"}},
 		Data:       map[string]string{config.RuntimeCatalogDataKey: string(data)},
 	}
 }
@@ -211,7 +211,7 @@ func desiredShadowRuntimeClass(route config.RuntimeAdapterRoute, adapter config.
 		config.RuntimeCatalogManagedByLabel: config.RuntimeCatalogManagedByValue,
 		config.RuntimeAdapterIDLabel:        adapter.ID,
 	})
-	annotations := mergeStringMap(source.Annotations, map[string]string{"ecloud.com/generated": "true"})
+	annotations := mergeStringMap(source.Annotations, map[string]string{"openfuyao.cn/generated": "true"})
 	shadow := &nodev1.RuntimeClass{
 		ObjectMeta: metav1.ObjectMeta{Name: route.RootfsRuntimeClass, Labels: labels, Annotations: annotations},
 		Handler:    adapter.RootfsHandler,
@@ -228,7 +228,9 @@ func desiredShadowRuntimeClass(route config.RuntimeAdapterRoute, adapter config.
 	return shadow
 }
 
-func AdapterReadinessLabel(adapterID string) string { return "ecloud.com/rootpv-adapter-" + adapterID }
+func AdapterReadinessLabel(adapterID string) string {
+	return "openfuyao.cn/rootpv-adapter-" + adapterID
+}
 
 func AdapterReadinessValue(digest string) string {
 	value := strings.TrimPrefix(digest, "sha256:")

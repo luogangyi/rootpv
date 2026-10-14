@@ -616,7 +616,7 @@ func TestResolveRootfsTargetContainerFromPodNameWhenUIDMissing(t *testing.T) {
 		PodName:       pod.PodName,
 		ContainerName: "dev",
 		Labels: map[string]string{
-			"ecloud.com/persistent-rootfs": "true",
+			"openfuyao.cn/persistent-rootfs": "true",
 		},
 	})
 	if err != nil {
@@ -647,7 +647,7 @@ func TestResolveRootfsPodNameIndexUsesLatestUID(t *testing.T) {
 		PodName:       newPod.PodName,
 		ContainerName: "dev",
 		Labels: map[string]string{
-			"ecloud.com/persistent-rootfs": "true",
+			"openfuyao.cn/persistent-rootfs": "true",
 		},
 	})
 	if err != nil {
@@ -674,7 +674,7 @@ func TestPrunePodsRemovesStalePodNameIndex(t *testing.T) {
 		PodName:       oldPod.PodName,
 		ContainerName: "dev",
 		Labels: map[string]string{
-			"ecloud.com/persistent-rootfs": "true",
+			"openfuyao.cn/persistent-rootfs": "true",
 		},
 	})
 	if err == nil {
@@ -742,7 +742,7 @@ func TestResolveRootfsFailClosedForUnidentifiedBusinessContainer(t *testing.T) {
 		SnapshotKey: "snapshot-unknown",
 		PodUID:      pod.PodUID,
 		Labels: map[string]string{
-			"ecloud.com/persistent-rootfs": "true",
+			"openfuyao.cn/persistent-rootfs": "true",
 		},
 	})
 	if err == nil {

@@ -89,6 +89,9 @@ test cases, acceptance criteria, and planned environment coverage.
 
 ## Installation and deployment
 
+RootPV keys and API groups use openfuyao.cn. For an existing installation, follow the
+[domain migration guide](docs/user-guide/domain-migration.md) before updating components or workloads.
+
 ### Prerequisites
 
 - A Kubernetes cluster with Linux nodes and containerd.
@@ -118,7 +121,7 @@ export ROOTPV_IMAGE_TAG=latest
 export ROOTPV_CHART=oci://openfuyao-0qfqnk.swr-pro.myhuaweicloud.com/charts/rootpv
 export ROOTPV_CHART_VERSION=0.0.0-latest
 
-kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
+kubectl label node <node-name> openfuyao.cn/persistent-rootfs=true --overwrite
 
 helm upgrade --install rootpv "${ROOTPV_CHART}" \
   --version "${ROOTPV_CHART_VERSION}" \
@@ -158,7 +161,7 @@ For the recommended Helm path, deploy the locally checked-out Chart with the ima
 nodes that should run the RootPV node agent:
 
 ```bash
-kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
+kubectl label node <node-name> openfuyao.cn/persistent-rootfs=true --overwrite
 
 helm upgrade --install rootpv charts/rootpv \
   --namespace rootpv-system \
@@ -184,7 +187,7 @@ helm template rootpv charts/rootpv \
   > rootpv-rendered.yaml
 
 kubectl create namespace rootpv-system --dry-run=client -o yaml | kubectl apply -f -
-kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
+kubectl label node <node-name> openfuyao.cn/persistent-rootfs=true --overwrite
 kubectl apply -f rootpv-rendered.yaml
 ```
 
@@ -200,8 +203,8 @@ Run these checks after any deployment path:
 ```bash
 kubectl -n rootpv-system rollout status deploy/persistent-rootfs-controller --timeout=180s
 kubectl -n rootpv-system rollout status ds/persistent-rootfsd --timeout=180s
-kubectl get runtimeclass -l ecloud.com/managed-by=rootpv
-kubectl get nodes -l ecloud.com/persistent-rootfs-ready=true
+kubectl get runtimeclass -l openfuyao.cn/managed-by=rootpv
+kubectl get nodes -l openfuyao.cn/persistent-rootfs-ready=true
 ```
 
 ### 5. Verify a persistent-rootfs workload
@@ -215,11 +218,11 @@ kind: Pod
 metadata:
   name: rootpv-demo
   annotations:
-    ecloud.com/persistent-rootfs: "true"
-    ecloud.com/rootfs-container: app
-    ecloud.com/rootfs-volume: rootfs-data
-    ecloud.com/rootfs-path: containers/app
-    ecloud.com/rootfs-base-image-policy: Strict
+    openfuyao.cn/persistent-rootfs: "true"
+    openfuyao.cn/rootfs-container: app
+    openfuyao.cn/rootfs-volume: rootfs-data
+    openfuyao.cn/rootfs-path: containers/app
+    openfuyao.cn/rootfs-base-image-policy: Strict
 spec:
   containers:
     - name: app
@@ -257,7 +260,7 @@ container's anchor path. The mount is read-only and does not expose the entire P
 the webhook injects them; do not remove the injected anchor from the final Pod. Declaring only
 `volumes` without a container mount does not replace the anchor.
 
-`ecloud.com/rootfs-path: containers/app` specifies a directory **inside the PVC**, where RootPV
+`openfuyao.cn/rootfs-path: containers/app` specifies a directory **inside the PVC**, where RootPV
 stores `upper`, `work`, and `meta`. The OCI wrapper or Kata proxy combines the image layers with the
 persistent `upper` to provide the container's root filesystem `/`; the annotation does not set a
 container `mountPath`. Mounting the entire `rootfs-data` volume at `/data` would also expose

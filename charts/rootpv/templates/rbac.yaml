@@ -38,7 +38,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - ecloud.com
+  - openfuyao.cn
   resources:
   - persistentrootfses
   verbs:
@@ -50,7 +50,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - ecloud.com
+  - openfuyao.cn
   resources:
   - persistentrootfses/status
   verbs:
@@ -140,7 +140,7 @@ rules:
   - patch
   - update
 - apiGroups:
-  - ecloud.com
+  - openfuyao.cn
   resources:
   - persistentrootfses
   verbs:
@@ -148,7 +148,7 @@ rules:
   - list
   - watch
 - apiGroups:
-  - ecloud.com
+  - openfuyao.cn
   resources:
   - persistentrootfses/status
   verbs:

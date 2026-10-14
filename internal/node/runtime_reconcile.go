@@ -181,8 +181,8 @@ func installAdapterHandler(raw map[string]any, adapter config.CatalogRuntimeAdap
 	for _, table := range criRuntimeTables(raw) {
 		runtimes := mapValue(table["runtimes"])
 		clone := cloneMap(source)
-		clone["pod_annotations"] = appendStringValue(clone["pod_annotations"], "ecloud.com/*")
-		clone["container_annotations"] = appendStringValue(clone["container_annotations"], "ecloud.com/*")
+		clone["pod_annotations"] = appendStringValue(clone["pod_annotations"], "openfuyao.cn/*")
+		clone["container_annotations"] = appendStringValue(clone["container_annotations"], "openfuyao.cn/*")
 		if config.IsKataQemuRuntimeType(adapter.RuntimeType) {
 			clone["runtime_path"] = wrapperBinary
 		} else {

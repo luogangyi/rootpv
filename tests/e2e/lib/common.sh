@@ -120,7 +120,7 @@ check_rootpv_components() {
     "daemonset/${ROOTPV_DAEMONSET}" "--timeout=${POD_START_TIMEOUT}"
   local ready_label
   ready_label="$(remote_kubectl get node "${TEST_NODE}" \
-    -o jsonpath='{.metadata.labels.ecloud\.com/persistent-rootfs-ready}')"
+    -o jsonpath='{.metadata.labels.openfuyao\.cn/persistent-rootfs-ready}')"
   [[ "${ready_label}" == "true" ]] || {
     echo "RootPV node is not ready: ${TEST_NODE}" >&2
     return 1
@@ -156,11 +156,11 @@ apply_rootpv_pod() {
 
   {
     printf '%s\n' 'apiVersion: v1' 'kind: Pod' 'metadata:' "  name: ${pod_name}" "  namespace: ${TEST_NAMESPACE}" '  annotations:' \
-      '    ecloud.com/persistent-rootfs: "true"' \
-      "    ecloud.com/rootfs-container: ${TEST_CONTAINER_NAME}" \
-      "    ecloud.com/rootfs-volume: ${TEST_VOLUME_NAME}" \
-      "    ecloud.com/rootfs-path: ${rootfs_path}" \
-      '    ecloud.com/rootfs-base-image-policy: Strict' \
+      '    openfuyao.cn/persistent-rootfs: "true"' \
+      "    openfuyao.cn/rootfs-container: ${TEST_CONTAINER_NAME}" \
+      "    openfuyao.cn/rootfs-volume: ${TEST_VOLUME_NAME}" \
+      "    openfuyao.cn/rootfs-path: ${rootfs_path}" \
+      '    openfuyao.cn/rootfs-base-image-policy: Strict' \
       'spec:' '  restartPolicy: Never'
     if [[ -n "${ORIGINAL_RUNTIME_CLASS:-}" ]]; then
       printf '%s\n' "  runtimeClassName: ${ORIGINAL_RUNTIME_CLASS}"
@@ -198,7 +198,7 @@ verify_standard_pod() {
   local pod_name="$1"
   local runtime_class mutation_marker node_name
   runtime_class="$(remote_kubectl -n "${TEST_NAMESPACE}" get pod "${pod_name}" -o jsonpath='{.spec.runtimeClassName}')"
-  mutation_marker="$(remote_kubectl -n "${TEST_NAMESPACE}" get pod "${pod_name}" -o jsonpath='{.metadata.annotations.ecloud\.com/persistent-rootfs-mutated}')"
+  mutation_marker="$(remote_kubectl -n "${TEST_NAMESPACE}" get pod "${pod_name}" -o jsonpath='{.metadata.annotations.openfuyao\.cn/persistent-rootfs-mutated}')"
   node_name="$(remote_kubectl -n "${TEST_NAMESPACE}" get pod "${pod_name}" -o jsonpath='{.spec.nodeName}')"
   [[ -z "${runtime_class}" && -z "${mutation_marker}" ]] || {
     echo "non-opt-in pod was unexpectedly mutated" >&2
@@ -214,11 +214,11 @@ assert_invalid_rootfs_config_rejected() {
   if {
     printf '%s\n' 'apiVersion: v1' 'kind: Pod' 'metadata:' \
       "  name: ${INVALID_POD_NAME}" "  namespace: ${TEST_NAMESPACE}" '  annotations:' \
-      '    ecloud.com/persistent-rootfs: "true"' \
-      "    ecloud.com/rootfs-container: ${INVALID_ROOTFS_CONTAINER}" \
-      "    ecloud.com/rootfs-volume: ${TEST_VOLUME_NAME}" \
-      '    ecloud.com/rootfs-path: e2e/invalid' \
-      '    ecloud.com/rootfs-base-image-policy: Strict' \
+      '    openfuyao.cn/persistent-rootfs: "true"' \
+      "    openfuyao.cn/rootfs-container: ${INVALID_ROOTFS_CONTAINER}" \
+      "    openfuyao.cn/rootfs-volume: ${TEST_VOLUME_NAME}" \
+      '    openfuyao.cn/rootfs-path: e2e/invalid' \
+      '    openfuyao.cn/rootfs-base-image-policy: Strict' \
       'spec:' '  containers:' \
       "  - name: ${TEST_CONTAINER_NAME}" \
       "    image: ${TEST_IMAGE}" \
@@ -240,7 +240,7 @@ verify_mutation() {
   local pod_name="$1"
   local runtime_class adapter node_name
   runtime_class="$(remote_kubectl -n "${TEST_NAMESPACE}" get pod "${pod_name}" -o jsonpath='{.spec.runtimeClassName}')"
-  adapter="$(remote_kubectl -n "${TEST_NAMESPACE}" get pod "${pod_name}" -o jsonpath='{.metadata.annotations.ecloud\.com/runtime-adapter-id}')"
+  adapter="$(remote_kubectl -n "${TEST_NAMESPACE}" get pod "${pod_name}" -o jsonpath='{.metadata.annotations.openfuyao\.cn/runtime-adapter-id}')"
   node_name="$(remote_kubectl -n "${TEST_NAMESPACE}" get pod "${pod_name}" -o jsonpath='{.spec.nodeName}')"
   [[ "${runtime_class}" == "${EXPECTED_RUNTIME_CLASS}" ]] || {
     echo "unexpected RuntimeClass: ${runtime_class}" >&2

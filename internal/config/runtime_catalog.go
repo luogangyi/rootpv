@@ -28,14 +28,14 @@ const (
 	maxGeneratedAdapterIDLength = 45
 
 	RuntimeInventoryFormatVersion     = "rootpv-runtime-inventory-v1"
-	RuntimeInventoryVersionAnnotation = "ecloud.com/rootpv-runtime-inventory-version"
-	RuntimeInventoryAnnotation        = "ecloud.com/rootpv-runtime-inventory"
+	RuntimeInventoryVersionAnnotation = "openfuyao.cn/rootpv-runtime-inventory-version"
+	RuntimeInventoryAnnotation        = "openfuyao.cn/rootpv-runtime-inventory"
 	RuntimeCatalogConfigMapName       = "rootpv-runtime-adapters"
 	RuntimeCatalogDataKey             = "catalog.yaml"
-	RuntimeClassOptOutAnnotation      = "ecloud.com/rootpv-auto-adapter"
-	RuntimeCatalogManagedByLabel      = "ecloud.com/managed-by"
+	RuntimeClassOptOutAnnotation      = "openfuyao.cn/rootpv-auto-adapter"
+	RuntimeCatalogManagedByLabel      = "openfuyao.cn/managed-by"
 	RuntimeCatalogManagedByValue      = "rootpv"
-	RuntimeAdapterIDLabel             = "ecloud.com/runtime-adapter-id"
+	RuntimeAdapterIDLabel             = "openfuyao.cn/runtime-adapter-id"
 )
 
 // DiscoveredRuntimeHandler is the safe, path-free subset of a node's

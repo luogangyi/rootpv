@@ -2,6 +2,8 @@
 
 ## 架构与前提
 
+当前协议键统一使用 openfuyao.cn；已有安装升级前先阅读 [域名迁移指南](domain-migration.md)。
+
 RootPV 在原生 containerd overlayfs snapshotter 上把容器可写层持久化到 PVC。
 runc-v2 handler 使用 rootfs-runtime-wrapper 的 OCI CLI 路径；Kata + QEMU 使用
 containerd-shim-rootpv-kata-v2 的 task API 代理路径。两者共用 admission、自动发现
@@ -23,7 +25,7 @@ Kata 功能需要包含新 proxy shim 的镜像。使用本分支源码构建并
 make image IMAGE=<image-repository>:<image-tag>
 make push IMAGE=<image-repository>:<image-tag>
 
-kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
+kubectl label node <node-name> openfuyao.cn/persistent-rootfs=true --overwrite
 
 helm upgrade --install rootpv charts/rootpv \
   --namespace rootpv-system \
@@ -71,7 +73,7 @@ helm template rootpv charts/rootpv \
   > rootpv-rendered.yaml
 
 kubectl create namespace rootpv-system --dry-run=client -o yaml | kubectl apply -f -
-kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
+kubectl label node <node-name> openfuyao.cn/persistent-rootfs=true --overwrite
 kubectl apply -f rootpv-rendered.yaml
 ```
 
@@ -90,13 +92,13 @@ kubectl -n rootpv-system rollout restart deployment/persistent-rootfs-controller
 ```bash
 kubectl -n rootpv-system rollout status deploy/persistent-rootfs-controller --timeout=180s
 kubectl -n rootpv-system rollout status ds/persistent-rootfsd --timeout=180s
-kubectl get runtimeclass -l ecloud.com/managed-by=rootpv
-kubectl get nodes -l ecloud.com/persistent-rootfs-ready=true
+kubectl get runtimeclass -l openfuyao.cn/managed-by=rootpv
+kubectl get nodes -l openfuyao.cn/persistent-rootfs-ready=true
 kubectl -n rootpv-system get configmap rootpv-runtime-adapters -o yaml
 ```
 
 对于 Kata，还需出现 persistent-rootfs-kata-qemu，且目标节点带有
-ecloud.com/rootpv-adapter-kata-qemu-v2 标签。Pod 能力标签与具体 adapter 就绪标签均需确认。
+openfuyao.cn/rootpv-adapter-kata-qemu-v2 标签。Pod 能力标签与具体 adapter 就绪标签均需确认。
 
 ## 启用持久 rootfs
 
@@ -108,11 +110,11 @@ kind: Pod
 metadata:
   name: rootpv-demo
   annotations:
-    ecloud.com/persistent-rootfs: "true"
-    ecloud.com/rootfs-container: app
-    ecloud.com/rootfs-volume: data
-    ecloud.com/rootfs-path: containers/app
-    ecloud.com/rootfs-base-image-policy: Strict
+    openfuyao.cn/persistent-rootfs: "true"
+    openfuyao.cn/rootfs-container: app
+    openfuyao.cn/rootfs-volume: data
+    openfuyao.cn/rootfs-path: containers/app
+    openfuyao.cn/rootfs-base-image-policy: Strict
 spec:
   containers:
   - name: app

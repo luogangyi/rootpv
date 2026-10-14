@@ -6,7 +6,7 @@ kind: Namespace
 metadata:
   name: rootpv-test-kata-qemu
   labels:
-    ecloud.com/rootpv-kata-test: "true"
+    openfuyao.cn/rootpv-kata-test: "true"
 ---
 apiVersion: v1
 kind: PersistentVolume
@@ -54,11 +54,11 @@ metadata:
   name: kata-rootpv-test
   namespace: rootpv-test-kata-qemu
   annotations:
-    ecloud.com/persistent-rootfs: "true"
-    ecloud.com/rootfs-container: app
-    ecloud.com/rootfs-volume: rootfs-data
-    ecloud.com/rootfs-path: kata-test/app
-    ecloud.com/rootfs-base-image-policy: Strict
+    openfuyao.cn/persistent-rootfs: "true"
+    openfuyao.cn/rootfs-container: app
+    openfuyao.cn/rootfs-volume: rootfs-data
+    openfuyao.cn/rootfs-path: kata-test/app
+    openfuyao.cn/rootfs-base-image-policy: Strict
 spec:
   runtimeClassName: kata-qemu
   restartPolicy: Never

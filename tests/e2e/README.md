@@ -91,6 +91,9 @@ Kata 性能基线仍待专门验证：两条路径都须使用同一原 QEMU Run
 
 ## 结果索引
 
+域名迁移后的检查见 [2026-10-14 本地冒烟](results/domain-migration-2026-10-14.md)。
+目标环境正在维护，此轮未执行新域名集群冒烟；此前 Kata 记录对应迁移前的实现。
+
 | 组合 | 证据与范围 |
 | --- | --- |
 | Kubernetes v1.29 / containerd 2.1 / runc / 动态块 PVC | [功能](results/functional-2026-09-14.md)、[性能](results/performance-2026-09-14.md) |

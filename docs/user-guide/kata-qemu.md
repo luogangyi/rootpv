@@ -50,11 +50,11 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
 ```yaml
 metadata:
   annotations:
-    ecloud.com/persistent-rootfs: "true"
-    ecloud.com/rootfs-container: app
-    ecloud.com/rootfs-volume: rootfs-data
-    ecloud.com/rootfs-path: applications/example
-    ecloud.com/rootfs-base-image-policy: Strict
+    openfuyao.cn/persistent-rootfs: "true"
+    openfuyao.cn/rootfs-container: app
+    openfuyao.cn/rootfs-volume: rootfs-data
+    openfuyao.cn/rootfs-path: applications/example
+    openfuyao.cn/rootfs-base-image-policy: Strict
 spec:
   runtimeClassName: kata-qemu
 ```

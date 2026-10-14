@@ -85,6 +85,9 @@ QEMU 11.0.1 和 ext4 local RWO PVC，已覆盖持久化、sidecar、单写互斥
 
 ## 安装与部署
 
+RootPV 的协议键与 API group 使用 openfuyao.cn。已有安装升级前，请先阅读
+[域名迁移指南](docs/user-guide/domain-migration.md)，同步更新组件、节点配置和业务 YAML。
+
 ### 前提条件
 
 - 运行 Linux 节点和 containerd 的 Kubernetes 集群。
@@ -113,7 +116,7 @@ export ROOTPV_IMAGE_TAG=latest
 export ROOTPV_CHART=oci://openfuyao-0qfqnk.swr-pro.myhuaweicloud.com/charts/rootpv
 export ROOTPV_CHART_VERSION=0.0.0-latest
 
-kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
+kubectl label node <node-name> openfuyao.cn/persistent-rootfs=true --overwrite
 
 helm upgrade --install rootpv "${ROOTPV_CHART}" \
   --version "${ROOTPV_CHART_VERSION}" \
@@ -149,7 +152,7 @@ make push IMAGE=<image-repository>:<image-tag>
 推荐的 Helm 路径是使用本地检出的 Chart 和刚刚构建的镜像进行部署。仅为需要运行 RootPV 节点代理的节点打标：
 
 ```bash
-kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
+kubectl label node <node-name> openfuyao.cn/persistent-rootfs=true --overwrite
 
 helm upgrade --install rootpv charts/rootpv \
   --namespace rootpv-system \
@@ -174,7 +177,7 @@ helm template rootpv charts/rootpv \
   > rootpv-rendered.yaml
 
 kubectl create namespace rootpv-system --dry-run=client -o yaml | kubectl apply -f -
-kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
+kubectl label node <node-name> openfuyao.cn/persistent-rootfs=true --overwrite
 kubectl apply -f rootpv-rendered.yaml
 ```
 
@@ -190,8 +193,8 @@ deploy/manifests 的旧静态 installer 使用固定 runc/NVIDIA handler，不�
 ```bash
 kubectl -n rootpv-system rollout status deploy/persistent-rootfs-controller --timeout=180s
 kubectl -n rootpv-system rollout status ds/persistent-rootfsd --timeout=180s
-kubectl get runtimeclass -l ecloud.com/managed-by=rootpv
-kubectl get nodes -l ecloud.com/persistent-rootfs-ready=true
+kubectl get runtimeclass -l openfuyao.cn/managed-by=rootpv
+kubectl get nodes -l openfuyao.cn/persistent-rootfs-ready=true
 ```
 
 ### 5. 验证持久根目录工作负载
@@ -205,11 +208,11 @@ kind: Pod
 metadata:
   name: rootpv-demo
   annotations:
-    ecloud.com/persistent-rootfs: "true"
-    ecloud.com/rootfs-container: app
-    ecloud.com/rootfs-volume: rootfs-data
-    ecloud.com/rootfs-path: containers/app
-    ecloud.com/rootfs-base-image-policy: Strict
+    openfuyao.cn/persistent-rootfs: "true"
+    openfuyao.cn/rootfs-container: app
+    openfuyao.cn/rootfs-volume: rootfs-data
+    openfuyao.cn/rootfs-path: containers/app
+    openfuyao.cn/rootfs-base-image-policy: Strict
 spec:
   containers:
     - name: app
@@ -245,7 +248,7 @@ volumeMounts:
 可以省略的是用户提交 YAML 中的这些字段，因为 Webhook 会自动补齐；最终 Pod 中注入的
 anchor 挂载不能删除，仅声明 `volumes` 而没有容器挂载也不能替代它。
 
-`ecloud.com/rootfs-path: containers/app` 指定的是 **PVC 内部的数据目录**，RootPV 在其中
+`openfuyao.cn/rootfs-path: containers/app` 指定的是 **PVC 内部的数据目录**，RootPV 在其中
 保存 `upper`、`work` 和 `meta`。OCI wrapper 或 Kata proxy 将镜像层与持久化的 `upper` 合并，
 作为容器根文件系统 `/`；该注解不会设置容器内的 `mountPath`。若把整个 `rootfs-data`
 卷挂载到 `/data`，应用还会看到 `/data/containers/app/{upper,work,meta}`。

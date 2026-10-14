@@ -6,6 +6,9 @@
 
 **适用版本：** 当前源码；Kata + QEMU 实现见 lgy/kata-qemu 的 33c9c36
 
+openfuyao.cn 域名迁移已完成 [本地冒烟](../../tests/e2e/results/domain-migration-2026-10-14.md)。
+目标集群正在维护，新域名的集群冒烟尚未执行；既有记录对应各自标明的实现版本。
+
 ## 1. 目的与原则
 
 RootPV 的数据路径依赖 Kubernetes 准入、containerd runtime handler、`overlayfs` 挂载语义、PVC

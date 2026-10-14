@@ -216,7 +216,7 @@ RuntimeClass 是 Kubernetes/CRI 用来选择 containerd runtime handler 的声�
   -> exec 真实 runtime
 ```
 
-admission 会把用户指定的 RuntimeClass 保存到 `ecloud.com/original-runtime-class`，并把 Pod 的 `runtimeClassName` 改为映射后的 RootPV RuntimeClass。该 annotation 用于审计和幂等 mutation；当前 wrapper 不会根据它重新调用原 RuntimeClass，而是根据 wrapper basename 到 delegate binary 的静态配置选择真实 runtime。
+admission 会把用户指定的 RuntimeClass 保存到 `openfuyao.cn/original-runtime-class`，并把 Pod 的 `runtimeClassName` 改为映射后的 RootPV RuntimeClass。该 annotation 用于审计和幂等 mutation；当前 wrapper 不会根据它重新调用原 RuntimeClass，而是根据 wrapper basename 到 delegate binary 的静态配置选择真实 runtime。
 
 因此，用户指定 RuntimeClass 时只有以下情况能够正常工作：
 
@@ -452,11 +452,11 @@ kind: Pod
 metadata:
   name: rootpv-workspace
   annotations:
-    ecloud.com/persistent-rootfs: "true"
-    ecloud.com/rootfs-container: workspace
-    ecloud.com/rootfs-volume: rootfs-pvc
-    ecloud.com/rootfs-path: containers/workspace
-    ecloud.com/rootfs-base-image-policy: Strict
+    openfuyao.cn/persistent-rootfs: "true"
+    openfuyao.cn/rootfs-container: workspace
+    openfuyao.cn/rootfs-volume: rootfs-pvc
+    openfuyao.cn/rootfs-path: containers/workspace
+    openfuyao.cn/rootfs-base-image-policy: Strict
 spec:
   containers:
   - name: workspace
@@ -477,8 +477,8 @@ spec:
 ```yaml
 metadata:
   annotations:
-    ecloud.com/persistent-rootfs: "true"
-    ecloud.com/rootfs.spec: >-
+    openfuyao.cn/persistent-rootfs: "true"
+    openfuyao.cn/rootfs.spec: >-
       [
         {"containerName":"dev","volumeName":"rootfs-pvc","path":"containers/dev","baseImagePolicy":"Strict"},
         {"containerName":"tools","volumeName":"rootfs-pvc","path":"containers/tools","baseImagePolicy":"Strict"}

@@ -26,28 +26,28 @@ import (
 const (
 	SnapshotLabelPrefix = "containerd.io/snapshot/"
 
-	AnnotationEnabled = "ecloud.com/persistent-rootfs"
+	AnnotationEnabled = "openfuyao.cn/persistent-rootfs"
 	// AnnotationWrapperEnabled is the controller-owned marker used after a
 	// wrapper-mode admission mutation.  Keeping the user-facing annotation from
 	// being exactly "true" prevents legacy legacy containerd patch builds from
 	// selecting the removed legacy proxy snapshotter.
-	AnnotationWrapperEnabled  = "ecloud.com/persistent-rootfs-wrapper"
-	AnnotationContainer       = "ecloud.com/rootfs-container"
-	AnnotationVolume          = "ecloud.com/rootfs-volume"
-	AnnotationPath            = "ecloud.com/rootfs-path"
-	AnnotationBaseImagePolicy = "ecloud.com/rootfs-base-image-policy"
-	AnnotationQuota           = "ecloud.com/rootfs-quota"
-	AnnotationSpec            = "ecloud.com/rootfs.spec"
+	AnnotationWrapperEnabled  = "openfuyao.cn/persistent-rootfs-wrapper"
+	AnnotationContainer       = "openfuyao.cn/rootfs-container"
+	AnnotationVolume          = "openfuyao.cn/rootfs-volume"
+	AnnotationPath            = "openfuyao.cn/rootfs-path"
+	AnnotationBaseImagePolicy = "openfuyao.cn/rootfs-base-image-policy"
+	AnnotationQuota           = "openfuyao.cn/rootfs-quota"
+	AnnotationSpec            = "openfuyao.cn/rootfs.spec"
 
-	SnapshotLabelEnabled = "containerd.io/snapshot/ecloud.com/persistent-rootfs"
+	SnapshotLabelEnabled = "containerd.io/snapshot/openfuyao.cn/persistent-rootfs"
 
-	AnnotationOriginalRuntimeClass     = "ecloud.com/original-runtime-class"
-	AnnotationEffectiveRuntimeClass    = "ecloud.com/effective-runtime-class"
-	AnnotationRuntimeAdapterID         = "ecloud.com/runtime-adapter-id"
-	AnnotationRuntimeAdapterMode       = "ecloud.com/runtime-adapter-mode"
-	AnnotationRuntimeAdapterConfigHash = "ecloud.com/runtime-adapter-config-hash"
-	AnnotationMutated                  = "ecloud.com/persistent-rootfs-mutated"
-	AnnotationConfigHash               = "ecloud.com/persistent-rootfs-config-hash"
+	AnnotationOriginalRuntimeClass     = "openfuyao.cn/original-runtime-class"
+	AnnotationEffectiveRuntimeClass    = "openfuyao.cn/effective-runtime-class"
+	AnnotationRuntimeAdapterID         = "openfuyao.cn/runtime-adapter-id"
+	AnnotationRuntimeAdapterMode       = "openfuyao.cn/runtime-adapter-mode"
+	AnnotationRuntimeAdapterConfigHash = "openfuyao.cn/runtime-adapter-config-hash"
+	AnnotationMutated                  = "openfuyao.cn/persistent-rootfs-mutated"
+	AnnotationConfigHash               = "openfuyao.cn/persistent-rootfs-config-hash"
 
 	BaseImagePolicyStrict = "Strict"
 	BaseImagePolicyReset  = "Reset"
@@ -106,7 +106,7 @@ func ParsePodSpec(annotations map[string]string, containers []string, volumes []
 	simple := hasAnyAnnotation(annotations, AnnotationContainer, AnnotationVolume, AnnotationPath, AnnotationBaseImagePolicy, AnnotationQuota)
 	advanced := strings.TrimSpace(annotations[AnnotationSpec]) != ""
 	if simple && advanced {
-		return nil, true, errors.New("simple rootfs annotations and ecloud.com/rootfs.spec cannot be used together")
+		return nil, true, errors.New("simple rootfs annotations and openfuyao.cn/rootfs.spec cannot be used together")
 	}
 
 	var specs []ContainerRootfsSpec
