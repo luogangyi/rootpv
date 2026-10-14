@@ -443,3 +443,17 @@ func writeRecoveryState(t *testing.T, input recoveryStateInput) {
 func containsError(err error, text string) bool {
 	return err != nil && strings.Contains(err.Error(), text)
 }
+
+func TestKataRecoveryRetainsLeaseWhileEitherShimOwnerLives(t *testing.T) {
+	state := rootfsstate.State{FormatVersion: rootfsstate.FormatShimV1, Phase: rootfsstate.PhaseDeleting, Wrapper: rootfsstate.ProcessIdentity{PID: 1, StartTime: 11}, Shim: rootfsstate.ProcessIdentity{PID: 2, StartTime: 22}}
+	for _, owner := range []rootfsstate.ProcessIdentity{state.Wrapper, state.Shim} {
+		retained, err := retainRecoveredState(context.Background(), state, fakeProcessChecker{alive: map[rootfsstate.ProcessIdentity]bool{owner: true}}, fakeRuntimeStateChecker{})
+		if err != nil || !retained {
+			t.Fatalf("live Kata owner lease lost: %v %v", retained, err)
+		}
+	}
+	retained, err := retainRecoveredState(context.Background(), state, fakeProcessChecker{}, fakeRuntimeStateChecker{})
+	if err != nil || retained {
+		t.Fatalf("dead Kata owners retained forever: %v %v", retained, err)
+	}
+}

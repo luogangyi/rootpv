@@ -161,7 +161,11 @@ apply_rootpv_pod() {
       "    ecloud.com/rootfs-volume: ${TEST_VOLUME_NAME}" \
       "    ecloud.com/rootfs-path: ${rootfs_path}" \
       '    ecloud.com/rootfs-base-image-policy: Strict' \
-      'spec:' '  restartPolicy: Never' '  containers:' \
+      'spec:' '  restartPolicy: Never'
+    if [[ -n "${ORIGINAL_RUNTIME_CLASS:-}" ]]; then
+      printf '%s\n' "  runtimeClassName: ${ORIGINAL_RUNTIME_CLASS}"
+    fi
+    printf '%s\n' '  containers:' \
       "  - name: ${TEST_CONTAINER_NAME}" \
       "    image: ${TEST_IMAGE}" \
       "    imagePullPolicy: ${TEST_IMAGE_PULL_POLICY}" \

@@ -397,6 +397,9 @@ func (w Wrapper) runCutoverCreate(ctx context.Context, wrapperName string, args,
 	if err != nil {
 		return err
 	}
+	if adapter.RuntimeType != config.RuncV2RuntimeType {
+		return fmt.Errorf("OCI wrapper cannot delegate task shim %q", adapter.RuntimeType)
+	}
 	delegation := newDelegationState(inv.ContainerID, adapterID, adapter, ShouldMountPersistentRootfs(spec))
 	if err := w.stateStore().Save(w.Config.RuntimeRoot, inv.ContainerID, delegation); err != nil {
 		return err

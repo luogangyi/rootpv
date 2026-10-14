@@ -684,7 +684,7 @@ PVC 必须满足 Linux OverlayFS upperdir 要求：
 
 ### 16.3 Linux kernel
 
-内核必须支持项目规定的 OverlayFS 选项、mount namespace、flock 和所需 xattr。已在 `4.19.0-240.23.36.el8_2.bclinux.x86_64` 完成验证。发行版 backport 可能导致同版本号行为不同，因此安装时需要 capability probe。
+内核必须支持项目规定的 OverlayFS 选项、mount namespace、flock 和所需 xattr。已在 `4.19 系列厂商内核（构建标识已匿名）` 完成验证。发行版 backport 可能导致同版本号行为不同，因此安装时需要 capability probe。
 
 ### 16.4 OCI runtime
 

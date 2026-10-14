@@ -80,3 +80,10 @@ RootPV 时写入持久根目录，因此“性能损耗占比”表示持久根�
 | 根文件系统顺序写入（平均 / P95） | 1910 / 1972 ms | 1995 / 2066 ms | 平均 +4.45%；P95 +4.77% |
 | Pod 删除与运行时清理（平均 / P95） | 32336 / 32440 ms | 32247 / 32519 ms | 平均 -0.28%；P95 +0.24% |
 | 根文件系统顺序写入吞吐量 | 33.50 MiB/s | 32.08 MiB/s | 4.24% |
+
+Kata + QEMU 功能测试可复用 run-functional.sh：在配置中设置
+ORIGINAL_RUNTIME_CLASS=kata-qemu、EXPECTED_RUNTIME_CLASS=persistent-rootfs-kata-qemu、
+EXPECTED_RUNTIME_ADAPTER=kata-qemu-v2。运行前需安装带 Kata proxy shim 的 RootPV，
+并确认源 RuntimeClass、QEMU handler、适配器就绪标签及测试 PVC 存储策略。
+隔离测试环境 的额外多容器、互斥与 rootfsd 重启验证见
+[2026-10-14 Kata 验证记录](results/kata-qemu-2026-10-14.md)。

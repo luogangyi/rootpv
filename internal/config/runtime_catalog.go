@@ -103,16 +103,21 @@ func (c RuntimeCatalog) Digest() (string, error) {
 // from the source handler and CRI runtime interface. It never contains a
 // vendor binary path or a user-supplied adapter version.
 func RuntimeAdapterID(handler, runtimeType string) (string, error) {
-	if runtimeType != RuncV2RuntimeType {
+	if !SupportedRuntimeType(runtimeType) {
 		return "", fmt.Errorf("unsupported runtime type %q", runtimeType)
 	}
 	token := normalizeRuntimeToken(handler)
 	if token == "" {
 		return "", fmt.Errorf("runtime handler is empty after normalization")
 	}
-	id := "runc-v2"
-	if token != "runc" {
-		id = token + "-runc-v2"
+	family := "runc-v2"
+	base := "runc"
+	if IsKataQemuRuntimeType(runtimeType) {
+		family, base = "kata-qemu-v2", "kata-qemu"
+	}
+	id := family
+	if token != base {
+		id = token + "-" + family
 	}
 	return limitGeneratedID(id, handler+"\x00"+runtimeType), nil
 }
@@ -163,7 +168,7 @@ func collectActiveHandlers(inventories []RuntimeInventory, classes []RuntimeClas
 	return active, defaults
 }
 
-// buildCatalogAdapters 仅为在所有节点上具有一致 runc v2 证据的 handler 创建 adapter。
+// buildCatalogAdapters 仅为在所有节点上具有一致的受支持运行时证据的 handler 创建 adapter。
 func buildCatalogAdapters(active map[string]struct{}, reports map[string][]DiscoveredRuntimeHandler) (map[string]CatalogRuntimeAdapter, error) {
 	adapters := make(map[string]CatalogRuntimeAdapter, len(active))
 	for handler := range active {
@@ -171,7 +176,7 @@ func buildCatalogAdapters(active map[string]struct{}, reports map[string][]Disco
 		if err != nil {
 			return nil, err
 		}
-		if runtimeType == RuncV2RuntimeType && resolved {
+		if SupportedRuntimeType(runtimeType) && resolved {
 			id, err := RuntimeAdapterID(handler, runtimeType)
 			if err != nil {
 				return nil, err

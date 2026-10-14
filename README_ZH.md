@@ -31,6 +31,7 @@ RootPV 包含以下组件：
 - `persistent-rootfs-controller`：校验显式启用的 Pod，并完成 RootPV 所需的变更。
 - `persistent-rootfsd`：以 DaemonSet 运行，解析 PVC 挂载、管理元数据并持有单写租约。
 - `rootfs-runtime-wrapper`：在调用真实 OCI runtime 前准备 OverlayFS 根文件系统。
+- `containerd-shim-rootpv-kata-v2`：代理 Kata + QEMU 的 task 创建和删除，接入持久化根文件系统。
 - 用于部署的 Helm Chart 和 Kubernetes manifests。
 
 RootPV 仅使用 Kubernetes、containerd、OCI runtime-spec 和 Linux VFS 的公开接口。它不会 patch、替换或 fork containerd，也不接管 containerd 的镜像和 snapshot 垃圾回收。
@@ -41,10 +42,11 @@ RootPV 仅使用 Kubernetes、containerd、OCI runtime-spec 和 Linux VFS 的公
 - 基于 PVC 的单写持久根文件系统。
 - 严格校验基础镜像身份，防止将已有可写层意外复用到不兼容镜像。
 - 基于 `io.containerd.runc.v2` 的 runtime adapter；节点已正确安装且可发现的设备专用 runtime 也可接入。
+- Kata + QEMU task-shim adapter；源 handler 需显式配置 `runtime_path` 和 QEMU `ConfigPath`，见 [Kata 使用指南](docs/user-guide/kata-qemu.md)。
 
 首个版本不支持：非 containerd 运行时、非 `overlayfs` snapshotter、rootless 或非特权节点安装、一个根文件系统的读写共享、跨镜像链自动 Reset/Rebase，以及将可写层自动转换为 OCI 镜像。
 
-完整端到端基线覆盖 Linux x86_64、Kubernetes v1.29 系列、containerd 2.1.1+aiinfra、
+完整端到端基线覆盖 Linux x86_64、Kubernetes v1.29 系列、containerd 2.1.1（厂商构建）、
 `io.containerd.runc.v2` 运行时，以及动态供给的 ReadWriteOnce 块存储 PVC。在相同平台上，官方
 containerd 1.6.39、1.7.35、2.0.12 和静态 2.1.9 已额外完成动态 PVC 持久化与 Pod 重建验证；这些版本检查
 尚未覆盖完整的恢复、升级、并发和性能用例。当前基线还完成了 rootfsd 与 containerd 服务重启各 3 轮、
@@ -64,14 +66,14 @@ containerd 1.6.39、1.7.35、2.0.12 和静态 2.1.9 已额外完成动态 PVC �
 
 | 维度 | 组合或范围 | 已验证 | 未验证 |
 | --- | --- | --- | --- |
-| 基线平台 | linux/amd64；Kubernetes v1.29 系列；containerd 2.1.1+aiinfra；`overlayfs`；原生 `io.containerd.runc.v2`；ext4 的 RWO 块存储 PVC | 功能和性能 E2E；rootfsd、containerd 服务和节点重启各连续 3 轮；10 实例并发隔离；同路径单写互斥；RootPV Helm 升级/回滚 | 跨 containerd 大版本的受控迁移；卸载后自动清理节点 runtime handler |
+| 基线平台 | linux/amd64；Kubernetes v1.29 系列；containerd 2.1.1（厂商构建）；`overlayfs`；原生 `io.containerd.runc.v2`；ext4 的 RWO 块存储 PVC | 功能和性能 E2E；rootfsd、containerd 服务和节点重启各连续 3 轮；10 实例并发隔离；同路径单写互斥；RootPV Helm 升级/回滚 | 跨 containerd 大版本的受控迁移；卸载后自动清理节点 runtime handler |
 | Kubernetes 与 containerd | Kubernetes v1.27、v1.28、v1.30 及后续受支持系列；containerd 1.6、1.7、2.0 和其他 2.1 组合 | Kubernetes v1.29 + 官方 containerd 1.6.39、1.7.35、2.0.12 和静态 2.1.9：动态 PVC 持久化与 Pod 重建 | 其他全部配对；官方构建上的恢复、升级和性能 |
 | CPU 架构与内核 | linux/arm64 及其他受支持 Linux 内核/发行版组合 | — | 基线用例与 OverlayFS 恢复覆盖 |
 | 存储 | XFS 的 RWO 块存储 PVC | — | OverlayFS 挂载、持久化和清理覆盖 |
 | runc-v2 adapter | `BinaryName` delegate 非 wrapper 的自定义 `io.containerd.runc.v2` runtime | — | adapter 发现、生命周期、信号、退出码和恢复 |
 | GPU runtime | NVIDIA（环境具备时分别覆盖 MIG/vGPU）、AMD ROCm、Intel 和 MThreads | — | 设备工作负载、持久化、清理和各设备切分形态 |
 | NPU runtime | Ascend 及其他 runc-v2 兼容加速器；整卡和虚拟/切分形态分别记录 | — | 厂商工作负载、持久化、清理和隔离 |
-| Kata、gVisor 与其他独立 shim | `io.containerd.kata.v2`、runsc 和非 runc-v2 的 microVM/shim runtime | gVisor：RootPV opt-in 被拒绝；普通 gVisor Pod 正常运行且未被 RootPV 修改 | Kata 与其他独立 shim；RootPV 工作负载在当前架构下仍不支持 |
+| Kata + QEMU | Linux AMD64；Kubernetes 1.34.3；containerd 2.1.1；Kata 4.2.0 Rust；QEMU 11.0.1；ext4 local RWO PVC | [持久化、sidecar 隔离、单写互斥、rootfsd 重启、普通 Kata 与清理](tests/e2e/results/kata-qemu-2026-10-14.md) | 动态 CSI PVC、节点/VM 故障恢复、性能与设备 |\n| Kata、gVisor 与其他独立 shim | `io.containerd.kata.v2`、runsc 和非 runc-v2 的 microVM/shim runtime | gVisor：RootPV opt-in 被拒绝；普通 gVisor Pod 正常运行且未被 RootPV 修改 | Kata CLH、gVisor RootPV 工作负载与其他独立 shim；Kata QEMU 接入见 [Kata 使用指南](docs/user-guide/kata-qemu.md) |
 
 测试用例、验收标准和待寻找的环境见[兼容性验证方案与详细矩阵](docs/design/04-compatibility-validation-plan.md)。
 

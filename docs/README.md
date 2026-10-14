@@ -6,3 +6,5 @@
 - [`user-guide/`](user-guide/)：面向集群管理员和用户的部署、配置与运维说明。
 
 兼容性范围、验证状态和后续环境需求见[兼容性验证方案与矩阵](design/04-compatibility-validation-plan.md)。
+
+Kata + QEMU 接入见 [task shim 设计](design/05-kata-qemu-task-shim-adapter-design.md)与 [Kata 使用指南](user-guide/kata-qemu.md)。

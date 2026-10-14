@@ -68,17 +68,17 @@ device plugin 的精确版本。
 | --- | --- | --- | --- | --- |
 | Kubernetes | v1.27 系列 | 选择一个受支持的 containerd 1.6/1.7 组合 | stock `io.containerd.runc.v2` | 待验证 |
 | Kubernetes | v1.28 系列 | 选择一个受支持的 containerd 1.7 组合 | stock `io.containerd.runc.v2` | 待验证 |
-| Kubernetes | v1.29 系列 | 基线组合；覆盖当前 E2E 场景 | stock `io.containerd.runc.v2` | 验证中（2.1.1+aiinfra：基础功能、性能、R01/R02/R03 各连续 3 轮、C07 并发与互斥、U01 Helm 升级/回滚；官方 1.6.39、1.7.35、2.0.12 和静态 2.1.9 已完成 C04） |
+| Kubernetes | v1.29 系列 | 基线组合；覆盖当前 E2E 场景 | stock `io.containerd.runc.v2` | 验证中（2.1.1（厂商构建）：基础功能、性能、R01/R02/R03 各连续 3 轮、C07 并发与互斥、U01 Helm 升级/回滚；官方 1.6.39、1.7.35、2.0.12 和静态 2.1.9 已完成 C04） |
 | Kubernetes | v1.30 系列 | 选择一个受支持的 containerd 1.7/2.0 组合 | stock `io.containerd.runc.v2` | 待验证 |
 | Kubernetes | v1.31 及后续受支持系列 | 每新增一个项目支持的 Kubernetes minor 至少选择一个组合 | stock `io.containerd.runc.v2` | 待验证 |
 | containerd | 1.6.x | 在一个受支持 Kubernetes 版本上完整验证 | stock `io.containerd.runc.v2` | 验证中（官方 1.6.39 在 Kubernetes v1.29 完成 C04；切换后先重建节点 CSI 插件 Pod） |
 | containerd | 1.7.x | 在两个不同 Kubernetes minor 上完整验证 | stock `io.containerd.runc.v2` | 验证中（官方 1.7.35 在 Kubernetes v1.29 完成 C04） |
 | containerd | 2.0.x | 在一个受支持 Kubernetes 版本上完整验证 | stock `io.containerd.runc.v2` | 验证中（官方 2.0.12 在 Kubernetes v1.29 完成 C04） |
-| containerd | 2.1.x | 作为当前基线持续回归 | stock `io.containerd.runc.v2` | 验证中（2.1.1+aiinfra：基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01；官方静态 2.1.9：PVC 持久化与 Pod 重建。直接降级到 1.6.28 不可复用运行中 2.1 状态） |
-| CPU 架构 | linux/amd64 | 每个 containerd 大版本至少一个基础组合 | stock `io.containerd.runc.v2` | 验证中（Kubernetes v1.29、containerd 2.1.1+aiinfra 基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01） |
+| containerd | 2.1.x | 作为当前基线持续回归 | stock `io.containerd.runc.v2` | 验证中（2.1.1（厂商构建）：基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01；官方静态 2.1.9：PVC 持久化与 Pod 重建。直接降级到 1.6.28 不可复用运行中 2.1 状态） |
+| CPU 架构 | linux/amd64 | 每个 containerd 大版本至少一个基础组合 | stock `io.containerd.runc.v2` | 验证中（Kubernetes v1.29、containerd 2.1.1（厂商构建） 基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01） |
 | CPU 架构 | linux/arm64 | 至少覆盖一个 Kubernetes/containerd 基础组合及一个设备组合 | stock `io.containerd.runc.v2` | 待验证 |
 | 操作系统/内核 | 主流发行版的 LTS 内核 | 每个新内核系列执行 OverlayFS 和恢复用例 | stock `io.containerd.runc.v2` | 待验证 |
-| OverlayFS 存储 | RWO block PVC + ext4 | 作为所有组合的首选基线 | stock `io.containerd.runc.v2` | 验证中（Kubernetes v1.29、containerd 2.1.1+aiinfra 基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01） |
+| OverlayFS 存储 | RWO block PVC + ext4 | 作为所有组合的首选基线 | stock `io.containerd.runc.v2` | 验证中（Kubernetes v1.29、containerd 2.1.1（厂商构建） 基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01） |
 | OverlayFS 存储 | RWO block PVC + XFS | 单独确认 XFS/OverlayFS 所需 mount 与内核能力 | stock `io.containerd.runc.v2` | 待验证 |
 
 不把网络文件系统、RWX 多节点共享、非 `overlayfs` snapshotter 或 rootless 节点纳入本矩阵；它们超出
@@ -92,7 +92,7 @@ device plugin 版本均是独立组合。每个“待验证”行都应先确认
 
 | 类别 | 首批目标形态 | RootPV 验证方式 | 计划级别 | 当前状态 |
 | --- | --- | --- | --- | --- |
-| 标准 OCI runtime | runc / `io.containerd.runc.v2` | 完整正向 E2E 与恢复测试 | 发布阻塞 | 验证中（Kubernetes v1.29、containerd 2.1.1+aiinfra、amd64 基础功能、性能与 rootfsd 重启） |
+| 标准 OCI runtime | runc / `io.containerd.runc.v2` | 完整正向 E2E 与恢复测试 | 发布阻塞 | 验证中（Kubernetes v1.29、containerd 2.1.1（厂商构建）、amd64 基础功能、性能与 rootfsd 重启） |
 | runc-v2 自定义 runtime | `BinaryName` 指向非 wrapper 的 delegate | 验证 adapter 发现、参数/信号/退出码、create/delete/state 和重启恢复 | 高 | 待验证 |
 | NVIDIA GPU | 整卡；MIG；有 vGPU 环境时单列 | GPU 分配、`nvidia-smi`/工作负载、持久化写入、重建与清理 | 高 | 待验证 |
 | AMD GPU/ROCm | 整卡；有切分能力时单列 | GPU 工作负载、设备节点/环境保留、持久化与清理 | 高 | 待验证 |

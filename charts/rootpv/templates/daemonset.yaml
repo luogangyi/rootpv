@@ -31,6 +31,7 @@ spec:
         - |
           install -d -m 0755 /host/usr/local/bin /host/etc/rootpv
           install -m 0755 /usr/local/bin/rootfs-runtime-wrapper /host/usr/local/bin/rootfs-runtime-wrapper
+          install -m 0755 /usr/local/bin/containerd-shim-rootpv-kata-v2 /host/usr/local/bin/containerd-shim-rootpv-kata-v2
           cat >/host/etc/rootpv/rootfs-runtime-wrapper.yaml <<EOF
           rootfsdSocket: /run/persistent-rootfsd/rootfsd.sock
           runtimeRoot: /run/rootpv/rootfs
@@ -107,7 +108,7 @@ spec:
           mountPath: /etc/persistent-rootfs
           readOnly: true
         - name: kubelet
-          mountPath: /var/lib/kubelet
+          mountPath: {{ .Values.nodeAgent.kubeletRoot }}
           mountPropagation: HostToContainer
         - name: containerd-run
           mountPath: /run/containerd

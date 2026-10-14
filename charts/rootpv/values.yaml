@@ -131,6 +131,8 @@ runtimeAdapterDiscovery:
   enabled: true
   supportedRuntimeTypes:
   - io.containerd.runc.v2
+  - io.containerd.kata-qemu.v2
+  - io.containerd.kata.v2
   maxHandlersPerNode: 64
 
 webhook:

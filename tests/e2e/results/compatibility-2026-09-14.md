@@ -8,8 +8,8 @@
 
 | 组合 | 验证内容 | 结果 |
 | --- | --- | --- |
-| containerd 2.1.1+aiinfra + stock `io.containerd.runc.v2` | 功能、性能、动态 PVC 持久化与清理 | 通过；详细数据见关联结果 |
-| containerd 2.1.1+aiinfra + stock `io.containerd.runc.v2` | 写入持久根目录标记后重启 rootfsd 节点代理；确认原 Pod 仍运行，删除并重建 Pod 后读取并更新标记 | 通过 |
+| containerd 2.1.1（厂商构建） + stock `io.containerd.runc.v2` | 功能、性能、动态 PVC 持久化与清理 | 通过；详细数据见关联结果 |
+| containerd 2.1.1（厂商构建） + stock `io.containerd.runc.v2` | 写入持久根目录标记后重启 rootfsd 节点代理；确认原 Pod 仍运行，删除并重建 Pod 后读取并更新标记 | 通过 |
 | 官方静态 containerd 2.1.9 + stock `io.containerd.runc.v2` | 在隔离节点以官方校验过的静态二进制替换厂商构建；写入持久根目录标记后删除并重建 Pod | 通过；测试后已恢复节点原始二进制、配置与 cordon 状态 |
 | 官方 containerd 1.6.39 + stock `io.containerd.runc.v2` | 在隔离节点切换运行时；动态供给 ext4 PVC，写入根目录标记后删除并重建 Pod，读回并更新标记 | 通过；切换运行时后需重建节点 CSI 插件 Pod 以刷新其 socket/挂载命名空间，再执行 PVC 用例；测试后已删除命名空间、移除 RootPV 节点标签并恢复节点原始二进制、配置与 cordon 状态 |
 | 官方 containerd 1.7.35 + stock `io.containerd.runc.v2` | 在隔离节点切换运行时；动态供给 ext4 PVC，写入根目录标记后删除并重建 Pod，读回并更新标记 | 通过；测试后已删除命名空间、移除 RootPV 节点标签并恢复节点原始二进制、配置与 cordon 状态 |

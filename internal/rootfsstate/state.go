@@ -23,6 +23,7 @@ import (
 )
 
 const (
+	FormatShimV1       = "rootpv-kata-shim-v1"
 	FormatFlatV1       = "flat-overlay-runtime-v1"
 	FormatNestedV1     = "nested-rootfs-runtime-v1"
 	FormatDelegationV1 = "rootpv-delegation-v1"
@@ -92,7 +93,7 @@ type State struct {
 }
 
 func Validate(state State) error {
-	if state.FormatVersion != FormatFlatV1 && state.FormatVersion != FormatNestedV1 && state.FormatVersion != FormatDelegationV1 {
+	if state.FormatVersion != FormatShimV1 && state.FormatVersion != FormatFlatV1 && state.FormatVersion != FormatNestedV1 && state.FormatVersion != FormatDelegationV1 {
 		return fmt.Errorf("unsupported runtime state format %q", state.FormatVersion)
 	}
 	if state.ContainerID == "" {
@@ -103,6 +104,11 @@ func Validate(state State) error {
 	}
 	if state.FormatVersion == FormatDelegationV1 {
 		return validateDelegationState(state)
+	}
+	if state.FormatVersion == FormatShimV1 {
+		if state.RuntimeAdapterID == "" || state.DelegateBinary == "" || !state.Shim.Valid() || state.MountNamespace == 0 {
+			return fmt.Errorf("Kata shim routing and process identity are required")
+		}
 	}
 	return validateFlatState(state)
 }

@@ -28,9 +28,10 @@ import (
 const runtimeAdapterRegistryV2 = "rootpv-runtime-adapters-v2"
 
 type RuntimeReconcileOptions struct {
-	HostRoot      string
-	WrapperBinary string
-	RegistryPath  string
+	HostRoot       string
+	WrapperBinary  string
+	RegistryPath   string
+	KataShimBinary string
 }
 
 type RuntimeReconcileResult struct {
@@ -53,7 +54,8 @@ type localAdapterEntryV2 struct {
 	NodeResolvedDigest string `yaml:"nodeResolvedDigest"`
 }
 
-// ReconcileRuntimeAdapters 从目录中的源 handler 克隆 RootPV shadow handler，仅替换其 BinaryName；
+// ReconcileRuntimeAdapters 从目录中的源 handler 克隆 RootPV shadow handler，
+// runc 替换 BinaryName，Kata QEMU 替换 runtime_path；
 // 原厂 handler 始终不被改写。成功后同时写入仅 root 可读的本地 registry，调用方才可重载 containerd。
 func ReconcileRuntimeAdapters(containerdConfig string, catalog config.RuntimeCatalog, opts RuntimeReconcileOptions) (RuntimeReconcileResult, error) {
 	if catalog.FormatVersion != config.RuntimeCatalogFormatVersion {
@@ -62,13 +64,17 @@ func ReconcileRuntimeAdapters(containerdConfig string, catalog config.RuntimeCat
 	if opts.WrapperBinary == "" || opts.RegistryPath == "" {
 		return RuntimeReconcileResult{}, fmt.Errorf("wrapper binary and registry path are required")
 	}
+	effective, _, err := loadContainerdConfig(containerdConfig, opts.HostRoot)
+	if err != nil {
+		return RuntimeReconcileResult{}, err
+	}
 	data, err := os.ReadFile(containerdConfig)
 	if err != nil {
 		return RuntimeReconcileResult{}, err
 	}
 	var raw map[string]any
 	if _, err := toml.Decode(string(data), &raw); err != nil {
-		return RuntimeReconcileResult{}, fmt.Errorf("decode containerd config: %w", err)
+		return RuntimeReconcileResult{}, err
 	}
 	// The pre-catalog configurator installed these two fixed handlers.  They
 	// are superseded by catalog-derived handlers (for example
@@ -78,7 +84,7 @@ func ReconcileRuntimeAdapters(containerdConfig string, catalog config.RuntimeCat
 	registry := localAdapterRegistryV2{FormatVersion: runtimeAdapterRegistryV2, CatalogGeneration: catalog.Generation, Adapters: map[string]localAdapterEntryV2{}}
 	result := RuntimeReconcileResult{Readiness: map[string]string{}}
 	for _, adapter := range catalog.Adapters {
-		entry, ok, err := reconcileCatalogAdapter(raw, adapter, opts)
+		entry, ok, err := reconcileCatalogAdapter(raw, effective, adapter, opts)
 		if err != nil {
 			return RuntimeReconcileResult{}, err
 		}
@@ -104,11 +110,11 @@ func ReconcileRuntimeAdapters(containerdConfig string, catalog config.RuntimeCat
 	return result, nil
 }
 
-func reconcileCatalogAdapter(raw map[string]any, adapter config.CatalogRuntimeAdapter, opts RuntimeReconcileOptions) (localAdapterEntryV2, bool, error) {
-	if adapter.RuntimeType != config.RuncV2RuntimeType {
+func reconcileCatalogAdapter(raw, effective map[string]any, adapter config.CatalogRuntimeAdapter, opts RuntimeReconcileOptions) (localAdapterEntryV2, bool, error) {
+	if !config.SupportedRuntimeType(adapter.RuntimeType) {
 		return localAdapterEntryV2{}, false, nil
 	}
-	source := adapterSource(raw, adapter.SourceHandler)
+	source := adapterSource(effective, adapter.SourceHandler)
 	if len(source) == 0 {
 		if adapter.SourceHandler != "runc" {
 			return localAdapterEntryV2{}, false, nil
@@ -118,15 +124,20 @@ func reconcileCatalogAdapter(raw map[string]any, adapter config.CatalogRuntimeAd
 	if stringValue(source["runtime_type"]) != adapter.RuntimeType {
 		return localAdapterEntryV2{}, false, nil
 	}
+	if config.IsKataQemuRuntimeType(adapter.RuntimeType) {
+		if err := validateKataQemuConfig(source, opts.HostRoot); err != nil {
+			return localAdapterEntryV2{}, false, nil
+		}
+	}
 	delegate := adapterDelegate(source, adapter.SourceHandler, opts.HostRoot)
-	resolved, err := resolveSafeDelegate(delegate, RuntimeDiscoveryOptions{HostRoot: opts.HostRoot, WrapperPaths: []string{opts.WrapperBinary}}.withDefaults())
+	resolved, err := resolveSafeDelegate(delegate, RuntimeDiscoveryOptions{HostRoot: opts.HostRoot, WrapperPaths: []string{opts.WrapperBinary, kataShimBinary(opts)}}.withDefaults())
 	if err != nil {
 		return localAdapterEntryV2{}, false, nil
 	}
 	if err := installAdapterHandler(raw, adapter, source, opts); err != nil {
 		return localAdapterEntryV2{}, false, err
 	}
-	digest := sha256Hex([]byte(adapter.SourceHandler + "\x00" + adapter.RuntimeType + "\x00" + resolved))
+	digest := resolvedHandlerDigest(adapter.SourceHandler, adapter.RuntimeType, resolved, source, opts.HostRoot)
 	return localAdapterEntryV2{SourceHandler: adapter.SourceHandler, RootfsHandler: adapter.RootfsHandler, RuntimeType: adapter.RuntimeType, DelegateBinary: resolved, ClusterDigest: adapter.ClusterDigest, NodeResolvedDigest: digest}, true, nil
 }
 
@@ -140,6 +151,9 @@ func adapterSource(raw map[string]any, sourceHandler string) map[string]any {
 }
 
 func adapterDelegate(source map[string]any, sourceHandler, hostRoot string) string {
+	if config.IsKataQemuRuntimeType(stringValue(source["runtime_type"])) {
+		return stringValue(source["runtime_path"])
+	}
 	delegate := stringValue(mapValue(source["options"])["BinaryName"])
 	if delegate != "" || sourceHandler != "runc" {
 		return delegate
@@ -153,21 +167,29 @@ func adapterDelegate(source map[string]any, sourceHandler, hostRoot string) stri
 }
 
 func installAdapterHandler(raw map[string]any, adapter config.CatalogRuntimeAdapter, source map[string]any, opts RuntimeReconcileOptions) error {
-	wrapperBinary, err := ensureAdapterWrapper(opts, adapter.ID)
+	aliasOpts := opts
+	if config.IsKataQemuRuntimeType(adapter.RuntimeType) {
+		aliasOpts.WrapperBinary = kataShimBinary(opts)
+		if !executable(hostPath(opts.HostRoot, aliasOpts.WrapperBinary)) {
+			return fmt.Errorf("Kata proxy shim is not installed: %s", aliasOpts.WrapperBinary)
+		}
+	}
+	wrapperBinary, err := ensureAdapterWrapper(aliasOpts, adapter.ID)
 	if err != nil {
 		return err
 	}
 	for _, table := range criRuntimeTables(raw) {
 		runtimes := mapValue(table["runtimes"])
-		if _, exists := runtimes[adapter.SourceHandler]; !exists && adapter.SourceHandler != "runc" {
-			continue
-		}
 		clone := cloneMap(source)
 		clone["pod_annotations"] = appendStringValue(clone["pod_annotations"], "ecloud.com/*")
 		clone["container_annotations"] = appendStringValue(clone["container_annotations"], "ecloud.com/*")
-		options := mapValue(clone["options"])
-		options["BinaryName"] = wrapperBinary
-		clone["options"] = options
+		if config.IsKataQemuRuntimeType(adapter.RuntimeType) {
+			clone["runtime_path"] = wrapperBinary
+		} else {
+			options := mapValue(clone["options"])
+			options["BinaryName"] = wrapperBinary
+			clone["options"] = options
+		}
 		runtimes[adapter.RootfsHandler] = clone
 		table["runtimes"] = runtimes
 	}
@@ -238,6 +260,9 @@ func ensureAdapterWrapper(opts RuntimeReconcileOptions, adapterID string) (strin
 }
 
 func adapterWrapperBinary(wrapperBinary, adapterID string) string {
+	if filepath.Base(wrapperBinary) == "containerd-shim-rootpv-kata-v2" {
+		return filepath.Join(filepath.Dir(wrapperBinary), "containerd-shim-rootpv-"+adapterID)
+	}
 	return filepath.Join(filepath.Dir(wrapperBinary), "rootfs-runtime-wrapper-"+adapterID)
 }
 
@@ -297,4 +322,11 @@ func readinessValue(digest string) string {
 		return digest[len("sha256:") : len("sha256:")+16]
 	}
 	return digest
+}
+
+func kataShimBinary(opts RuntimeReconcileOptions) string {
+	if opts.KataShimBinary != "" {
+		return opts.KataShimBinary
+	}
+	return filepath.Join(filepath.Dir(opts.WrapperBinary), "containerd-shim-rootpv-kata-v2")
 }

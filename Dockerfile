@@ -21,10 +21,13 @@ RUN echo "building persistent-rootfsd for ${TARGETOS}/${TARGETARCH}" && CGO_ENAB
 RUN echo "building persistent-rootfs-controller for ${TARGETOS}/${TARGETARCH}" && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /out/persistent-rootfs-controller ./cmd/persistent-rootfs-controller
 RUN echo "building rootfs-runtime-wrapper for ${TARGETOS}/${TARGETARCH}" && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /out/rootfs-runtime-wrapper ./cmd/rootfs-runtime-wrapper
 
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /out/containerd-shim-rootpv-kata-v2 ./cmd/containerd-shim-rootpv-kata-v2
+
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends bash ca-certificates procps python3 util-linux && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/persistent-rootfsd /usr/local/bin/persistent-rootfsd
 COPY --from=build /out/persistent-rootfs-controller /usr/local/bin/persistent-rootfs-controller
 COPY --from=build /out/rootfs-runtime-wrapper /usr/local/bin/rootfs-runtime-wrapper
+COPY --from=build /out/containerd-shim-rootpv-kata-v2 /usr/local/bin/containerd-shim-rootpv-kata-v2
 COPY scripts/configure-containerd-rootpv.sh /usr/local/bin/scripts/configure-containerd-rootpv.sh
 ENTRYPOINT ["/usr/local/bin/persistent-rootfsd"]

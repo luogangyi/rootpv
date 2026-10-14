@@ -67,3 +67,5 @@ helm uninstall rootpv -n rootpv-system
 kubectl delete namespace rootpv-system --ignore-not-found
 ```
 
+
+Kata + QEMU 的安装条件和 RuntimeClass 用法见 [Kata 使用指南](kata-qemu.md)。
