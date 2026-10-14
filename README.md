@@ -211,13 +211,51 @@ spec:
     - name: app
       image: <your-image>
       command: ["/bin/sh", "-ec", "echo ready; sleep 3600"]
-      volumeMounts:
-        - name: rootfs-data
-          mountPath: /data
   volumes:
     - name: rootfs-data
       persistentVolumeClaim:
         claimName: rootpv-data
+```
+
+This is the YAML to submit when the RootPV mutating webhook is installed and enabled. Keep the
+`volumes` declaration; no user-defined `volumeMounts` is needed for rootfs persistence. Before the
+Pod is stored, the webhook automatically adds the following fields to the `app` container
+(an excerpt of the resulting Pod, not an additional manifest to apply):
+
+```yaml
+env:
+  - name: ROOTPV_POD_NAME
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.name
+volumeMounts:
+  - name: rootfs-data
+    mountPath: /var/run/rootpv/rootfs-anchor/rootfs-data
+    readOnly: true
+    subPathExpr: .rootpv-anchor/$(ROOTPV_POD_NAME)/app
+```
+
+The final Pod needs this anchor mount: it references `rootfs-data`, causing kubelet to mount the
+PVC on the node and providing a mount that RootPV can use to identify the PVC. `subPathExpr` uses
+the Pod name and container name to expose only `<PVC>/.rootpv-anchor/rootpv-demo/app` at the
+container's anchor path. The mount is read-only and does not expose the entire PVC or its
+`upper`, `work`, and `meta` directories. You may omit these fields from the submitted YAML because
+the webhook injects them; do not remove the injected anchor from the final Pod. Declaring only
+`volumes` without a container mount does not replace the anchor.
+
+`ecloud.com/rootfs-path: containers/app` specifies a directory **inside the PVC**, where RootPV
+stores `upper`, `work`, and `meta`. The runtime wrapper combines the image layers with the
+persistent `upper` to provide the container's root filesystem `/`; the annotation does not set a
+container `mountPath`. Mounting the entire `rootfs-data` volume at `/data` would also expose
+`/data/containers/app/{upper,work,meta}` to the application. It is unnecessary for rootfs persistence
+and allows the application to modify RootPV's backing data directly, so do not add that mount or
+mount those internal directories. If the application needs a separate data-volume mount, declare
+it separately from the rootfs backing PVC.
+
+Inspect the created Pod to confirm that the webhook added `ROOTPV_POD_NAME` and the read-only anchor:
+
+```bash
+kubectl get pod rootpv-demo -o yaml
 ```
 
 See the [documentation index](docs/README.md), [deployment guide](docs/user-guide/deployment.md), and [Helm chart](charts/rootpv/README.md) for configuration and operational details.

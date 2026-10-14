@@ -201,13 +201,47 @@ spec:
     - name: app
       image: <your-image>
       command: ["/bin/sh", "-ec", "echo ready; sleep 3600"]
-      volumeMounts:
-        - name: rootfs-data
-          mountPath: /data
   volumes:
     - name: rootfs-data
       persistentVolumeClaim:
         claimName: rootpv-data
+```
+
+上述 YAML 用于已安装并启用 RootPV Mutating Webhook 的集群。保留 `volumes` 声明即可，
+持久化 rootfs 无需用户手写 `volumeMounts`。在 Pod 保存之前，Webhook 会自动为 `app` 容器
+添加以下字段（这是注入后的 Pod 配置片段，不是需要额外应用的清单）：
+
+```yaml
+env:
+  - name: ROOTPV_POD_NAME
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.name
+volumeMounts:
+  - name: rootfs-data
+    mountPath: /var/run/rootpv/rootfs-anchor/rootfs-data
+    readOnly: true
+    subPathExpr: .rootpv-anchor/$(ROOTPV_POD_NAME)/app
+```
+
+最终 Pod 需要这个 anchor 挂载：它引用 `rootfs-data`，使 kubelet 将 PVC 挂载到节点，
+并提供 RootPV 定位 PVC 所需的挂载。`subPathExpr` 使用 Pod 名和容器名，仅将 PVC 中的
+`<PVC>/.rootpv-anchor/rootpv-demo/app` 子目录挂载到容器的 anchor 路径；`readOnly: true`
+使该挂载只读，不会将整个 PVC 或其中的 `upper`、`work`、`meta` 目录暴露给应用。
+可以省略的是用户提交 YAML 中的这些字段，因为 Webhook 会自动补齐；最终 Pod 中注入的
+anchor 挂载不能删除，仅声明 `volumes` 而没有容器挂载也不能替代它。
+
+`ecloud.com/rootfs-path: containers/app` 指定的是 **PVC 内部的数据目录**，RootPV 在其中
+保存 `upper`、`work` 和 `meta`。Runtime wrapper 将镜像层与持久化的 `upper` 合并，
+作为容器根文件系统 `/`；该注解不会设置容器内的 `mountPath`。若把整个 `rootfs-data`
+卷挂载到 `/data`，应用还会看到 `/data/containers/app/{upper,work,meta}`。
+这个挂载对 rootfs 持久化没有必要，还会让应用直接修改 RootPV 的底层数据，因此不要添加
+该挂载，也不要挂载这些内部目录。若应用需要独立的数据卷挂载，应另外声明业务 PVC 和挂载。
+
+创建 Pod 后，可检查 Webhook 是否已注入 `ROOTPV_POD_NAME` 和只读 anchor：
+
+```bash
+kubectl get pod rootpv-demo -o yaml
 ```
 
 更多配置和运维信息请参阅[文档索引](docs/README.md)、[部署指南](docs/user-guide/deployment.md)和 [Helm Chart 文档](charts/rootpv/README.md)。
