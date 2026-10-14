@@ -20,7 +20,7 @@ Admission controller -- selects a RootPV RuntimeClass and mounts the PVC anchor
 stock containerd overlayfs snapshotter -- provides immutable image lower layers
           |
           v
-RootPV OCI runtime wrapper -- mounts a single OverlayFS and delegates to runc/vendor runtime
+RootPV runtime adapter -- OCI wrapper (runc-v2) or task shim proxy (Kata + QEMU)
           |
           v
 PVC: upperdir + workdir + metadata
@@ -44,7 +44,7 @@ RootPV uses public Kubernetes, containerd, OCI runtime-spec, and Linux VFS inter
 - Runtime adapters for `io.containerd.runc.v2`-based runtimes, including device-specific runtimes when the node runtime is already installed and discovered.
 - Kata + QEMU task-shim adapters with explicit `runtime_path` and QEMU `ConfigPath`; see the [Kata guide](docs/user-guide/kata-qemu.md).
 
-The following are out of scope for the initial release: non-containerd runtimes, non-`overlayfs` snapshotters, rootless or unprivileged node installation, shared read/write use of one root filesystem, automatic rebase/reset across image chains, and converting a writable layer into an OCI image.
+The following are out of scope: non-containerd runtimes, non-`overlayfs` snapshotters, rootless or unprivileged node installation, shared read/write use of one root filesystem, automatic rebase/reset across image chains, and converting a writable layer into an OCI image.
 
 The full end-to-end baseline currently covers a Linux x86_64 Kubernetes v1.29-series cluster with
 containerd 2.1.1 (vendor build), an `io.containerd.runc.v2` runtime, and dynamically provisioned ReadWriteOnce
@@ -53,6 +53,11 @@ official containerd 1.6.39, 1.7.35, 2.0.12, and static 2.1.9 builds. These versi
 full recovery, upgrade, concurrency, or performance suite. The baseline also completed three rounds each of
 rootfsd, containerd-service, and node restart; ten-instance concurrent isolation; same-path single-writer
 exclusion; and a RootPV Helm upgrade/rollback.
+
+Kata + QEMU has separate functional evidence on Kubernetes 1.34.3, containerd 2.1.1, Kata 4.2.0 Rust,
+QEMU 11.0.1 and ext4 local RWO PVCs. That record covers persistence, sidecars, single-writer exclusion,
+rootfsd restart and normal deletion. It does not establish dynamic CSI, node/VM failure recovery or performance
+support for Kata; see the [verification record](tests/e2e/results/kata-qemu-2026-10-14.md).
 
 Directly downgrading a running containerd 2.1 state to 1.6 is not supported: the 1.6.28 candidate starts but
 cannot reuse the 2.1 runtime state. Cross-major rollback needs a controlled, drained-node migration that
@@ -76,7 +81,8 @@ its verification record is published. Entries in **Not yet validated** are not s
 | runc-v2 adapters | Custom `io.containerd.runc.v2` runtimes using a non-wrapper `BinaryName` delegate | — | Adapter discovery plus lifecycle, signal, exit-code, and recovery coverage |
 | GPU runtimes | NVIDIA (including MIG/vGPU where available), AMD ROCm, Intel, and MThreads | — | Device workload, persistence, cleanup, and each device-partitioning mode |
 | NPU runtimes | Ascend and other runc-v2-compatible accelerators; whole-device and virtual/partitioned modes tracked separately | — | Vendor workload, persistence, cleanup, and isolation coverage |
-| Kata + QEMU | Linux AMD64; Kubernetes 1.34.3; containerd 2.1.1; Kata 4.2.0 Rust; QEMU 11.0.1; ext4 local RWO PVC | [Persistence, sidecar isolation, single-writer exclusion, rootfsd restart, normal Kata and cleanup](tests/e2e/results/kata-qemu-2026-10-14.md) | Dynamic CSI PVC, node/VM failure recovery, performance and devices |\n| Kata, gVisor, and other independent shims | `io.containerd.kata.v2`, runsc, and non-runc-v2 microVM/shim runtimes | gVisor: RootPV opt-in is rejected; a normal gVisor Pod runs without RootPV mutation | Kata CLH, gVisor RootPV workloads, and other independent shims; Kata QEMU support is described in the [Kata guide](docs/user-guide/kata-qemu.md) |
+| Kata + QEMU | Linux AMD64; Kubernetes 1.34.3; containerd 2.1.1; Kata 4.2.0 Rust; QEMU 11.0.1; ext4 local RWO PVC | [Persistence, sidecar isolation, single-writer exclusion, rootfsd restart, normal Kata and cleanup](tests/e2e/results/kata-qemu-2026-10-14.md) | Dynamic CSI PVC, node/VM failure recovery, performance and devices |
+| Other independent shims | Kata CLH, runsc, and shims outside the QEMU adapter | gVisor: RootPV opt-in is rejected; a normal gVisor Pod runs without RootPV mutation | Kata CLH, gVisor RootPV workloads, and other independent shims; Kata QEMU support is described in the [Kata guide](docs/user-guide/kata-qemu.md) |
 
 See the [compatibility validation plan and detailed matrix](docs/design/04-compatibility-validation-plan.md) for
 test cases, acceptance criteria, and planned environment coverage.
@@ -94,6 +100,12 @@ test cases, acceptance criteria, and planned environment coverage.
 Both Helm installation paths update the containerd runtime configuration only on labeled nodes and reload or
 restart containerd when required. Review node paths, the containerd socket, and restart settings in
 `charts/rootpv/values.yaml`; plan the rollout according to your cluster's maintenance policy.
+
+Kata requires an image containing the new proxy shim and the current Chart installer. Build from this branch
+using Section 2, or verify that the selected CI artifact includes this implementation; a latest tag alone is insufficient.
+
+The storage-policy values are rendered into a ConfigMap; the current Controller does not load that file to
+enforce a StorageClass allowlist. Verify the actual PVC filesystem and OverlayFS capabilities.
 
 ### 1. Quick start: use CI artifacts
 
@@ -157,29 +169,29 @@ helm upgrade --install rootpv charts/rootpv \
   --wait --timeout 10m
 ```
 
-### 3. Alternative: deploy native manifests
+### 3. Alternative: apply rendered Kubernetes manifests
 
-This path uses the image built in Section 2, but replaces that section's Helm command and does not create a
-Helm release. Use it only when Helm is unavailable or disallowed, or when a GitOps/IaC workflow must manage
-the repository's raw Kubernetes resources.
-
-Before applying the manifests:
-
-1. Replace every `rootpv:latest` image reference in `deploy/manifests/50-controller-deployment.yaml` and
-   `deploy/manifests/50-daemonset.yaml` with `<image-repository>:<image-tag>`.
-2. Set `config.storagePolicy.allowStorageClasses` in `deploy/manifests/20-config.yaml` to include the selected
-   StorageClass.
-3. Label the intended node-agent nodes, and ensure these resources are not already managed by a Helm release
-   in the same namespace.
+For GitOps or kubectl-managed installation, render the Chart from this checkout using the image built in
+Section 2. Helm is needed at rendering time; the target deployment does not need a Helm release.
+Keep one owner for these resources.
 
 ```bash
+helm template rootpv charts/rootpv \
+  --namespace rootpv-system --include-crds \
+  --set image.repository=<image-repository> \
+  --set image.tag=<image-tag> \
+  --set-string 'config.storagePolicy.allowStorageClasses[0]=<storage-class>' \
+  > rootpv-rendered.yaml
+
+kubectl create namespace rootpv-system --dry-run=client -o yaml | kubectl apply -f -
 kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
-kubectl apply -f deploy/crds
-kubectl apply -f deploy/manifests
+kubectl apply -f rootpv-rendered.yaml
 ```
 
-For later changes, update the same manifest files and apply them again through `kubectl` or the GitOps system.
-Do not switch to the Helm path without first transferring ownership of the existing resources.
+The legacy static installer in deploy/manifests uses fixed runc/NVIDIA handlers and does not install the Kata
+proxy. Use the rendered current Chart for automatic runtime discovery and Kata support. Offline re-rendering
+generates fresh TLS certificates; when applying a new Secret and caBundle, restart the Controller to load the
+matching certificate. See the [deployment guide](docs/user-guide/deployment.md).
 
 ### 4. Verify the deployment
 
@@ -246,7 +258,7 @@ the webhook injects them; do not remove the injected anchor from the final Pod. 
 `volumes` without a container mount does not replace the anchor.
 
 `ecloud.com/rootfs-path: containers/app` specifies a directory **inside the PVC**, where RootPV
-stores `upper`, `work`, and `meta`. The runtime wrapper combines the image layers with the
+stores `upper`, `work`, and `meta`. The OCI wrapper or Kata proxy combines the image layers with the
 persistent `upper` to provide the container's root filesystem `/`; the annotation does not set a
 container `mountPath`. Mounting the entire `rootfs-data` volume at `/data` would also expose
 `/data/containers/app/{upper,work,meta}` to the application. It is unnecessary for rootfs persistence
@@ -262,9 +274,26 @@ kubectl get pod rootpv-demo -o yaml
 
 See the [documentation index](docs/README.md), [deployment guide](docs/user-guide/deployment.md), and [Helm chart](charts/rootpv/README.md) for configuration and operational details.
 
+### 6. Kata + QEMU workload
+
+Use the original RuntimeClass in the submitted Pod:
+
+```yaml
+spec:
+  runtimeClassName: kata-qemu
+```
+
+The QEMU adapter maps it to persistent-rootfs-kata-qemu and preserves the original scheduling and overhead.
+The backing PVC uses the same injected read-only anchor; untargeted sidecars keep ordinary root filesystems.
+See the [Kata guide](docs/user-guide/kata-qemu.md) for source handler prerequisites, node paths, and the
+[complete Namespace/PV/PVC/Pod test YAML](tests/e2e/manifests/kata-qemu.yaml). Source handler names other
+than kata-qemu have catalog-derived adapter IDs; inspect the generated catalog instead of hardcoding them.
+
 ## Validation results
 
-The latest cluster verification covered the following functional cases:
+The 2026-09-03 runc baseline covered the following functional cases; see the
+[functional record](tests/e2e/results/functional-2026-09-03.md). The separate
+[2026-10-14 Kata record](tests/e2e/results/kata-qemu-2026-10-14.md) covers the QEMU adapter.
 
 | Test case | Result |
 | --- | --- |
@@ -277,6 +306,8 @@ The latest cluster verification covered the following functional cases:
 
 Performance was measured with one warm-up iteration, three measured iterations per path, and a 64 MiB
 synchronous write per iteration. The same image, node, write size, and Pod lifecycle were used for both paths.
+The figures below are the [2026-09-03 runc measurements](tests/e2e/results/performance-2026-09-03.md);
+Kata performance has not been measured.
 
 | Metric | RootPV disabled | RootPV enabled | Performance impact |
 | --- | ---: | ---: | ---: |

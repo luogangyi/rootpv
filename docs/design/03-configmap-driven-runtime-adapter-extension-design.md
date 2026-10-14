@@ -4,9 +4,16 @@
 
 **设计日期：** 2026-07-17
 
-**基线设计：** [RootPV 统一 Runtime Wrapper 与 Runtime Adapter 设计](unified-runtime-wrapper-runtime-adapter-design.md)
+**基线设计：** [RootPV 统一 Runtime Wrapper 与 Runtime Adapter 设计](02-unified-runtime-wrapper-runtime-adapter-design.md)
 
-**适用范围：** 节点上已经安装并配置、能够通过 containerd `io.containerd.runc.v2` `BinaryName` 机制调用的 OCI runtime。
+**适用范围：** 已安装的 runc-v2 OCI runtime，以及显式配置 QEMU 的 Kata task shim；两种接口独立适配。
+
+> **2026-10-14 更新：** 自动发现新增 Kata + QEMU task shim adapter，支持
+> io.containerd.kata-qemu.v2 和明确配置 QEMU 的 io.containerd.kata.v2。
+> runc 仍使用 OCI BinaryName wrapper，Kata 使用 runtime_path 的独立代理。
+> 下文涉及规划中的并发配置锁、退役和版本迁移要求，需按实现与
+> [兼容性验证矩阵](04-compatibility-validation-plan.md)区分已落实与待验证能力。
+> Kata 生命周期以 [task shim 设计](05-kata-qemu-task-shim-adapter-design.md) 为准。
 
 ## 1. 结论
 
@@ -65,7 +72,7 @@ adapter ID 和版本
 
 ### 3.1 目标
 
-- 自动发现所有可通过 `io.containerd.runc.v2` 调用的 source handler；
+- 自动发现 runc-v2 source handler，以及显式配置 QEMU 的 Kata source handler；
 - 自动生成稳定、可解释、无人工版本歧义的 adapter ID；
 - 自动发现 Kubernetes RuntimeClass 到 source handler 的映射；
 - 自动创建 Shadow RuntimeClass 和 RootPV containerd handler；
@@ -78,7 +85,7 @@ adapter ID 和版本
 ### 3.2 非目标
 
 - 安装厂商驱动、device plugin、固件或 OCI runtime；
-- 自动支持 `io.containerd.kata.v2`、runsc 等独立 task shim；
+- 自动支持任意 task shim、Kata CLH 或 runsc；通用 Kata 类型仅在 QEMU 配置满足条件时接入；
 - 根据 runtime 名称猜测 binary 路径；
 - 根据 `huawei.com/*`、`nvidia.com/*` 等资源名前缀猜测对应 handler；
 - 自动执行节点上的任意探测脚本；
@@ -110,6 +117,8 @@ source handler + runtime type
 | `ascend` | `io.containerd.runc.v2` | `ascend-runc-v2` |
 | `crun` | `io.containerd.runc.v2` | `crun-runc-v2` |
 | `company-gpu` | `io.containerd.runc.v2` | `company-gpu-runc-v2` |
+| `kata-qemu` | `io.containerd.kata-qemu.v2` | `kata-qemu-v2` |
+| `kata` | `io.containerd.kata.v2`，QEMU 配置 | `kata-kata-qemu-v2` |
 
 adapter 不包含用户 RuntimeClass 名称，也不包含集群统一的 delegate path。delegate 是节点本地事实，允许不同节点安装在不同绝对路径。
 
@@ -151,15 +160,22 @@ runc-v2
 
 ```text
 handlerToken = normalizeDNSLabel(sourceHandler)
-runtimeToken = "runc-v2"
+if runtimeType == "io.containerd.runc.v2":
+    runtimeToken, baseHandler = "runc-v2", "runc"
+elif runtimeType in {"io.containerd.kata-qemu.v2", "io.containerd.kata.v2"}:
+    requireExplicitQemuConfig()
+    runtimeToken, baseHandler = "kata-qemu-v2", "kata-qemu"
+else:
+    unsupported()
 
-if handlerToken == "runc":
-    id = "runc-v2"
+if handlerToken == baseHandler:
+    id = runtimeToken
 else:
     id = handlerToken + "-" + runtimeToken
 ```
 
-因此 stock runc 直接得到 `runc-v2`，不会再出现容易误解的 `runc-v1`。
+因此 stock runc 得到 runc-v2；handler 名为 kata-qemu 时得到 kata-qemu-v2。
+同样的源 handler 名配合不同 runtime type 必须保持类型一致，不因名称像 Kata 就绕过 QEMU 验证。
 
 ### 5.2 规范化和冲突
 
@@ -207,7 +223,7 @@ flowchart TB
   Registry["节点 root-owned registry"]
   Ready["Node adapter digest label"]
   Admission["RootPV admission"]
-  Wrapper["统一 wrapper"]
+  Wrapper["runtime 执行入口<br/>OCI wrapper / Kata task proxy"]
 
   Containerd --> NodeAgent
   NodeAgent --> Inventory
@@ -231,25 +247,19 @@ flowchart TB
 
 ### 7.1 发现来源
 
-node-agent 定期读取：
-
-- containerd 主配置文件；
-- `containerd config dump` 实际加载结果；
-- containerd CRI v1/v2/v3 runtime table；
-- Node 的 allocatable/capacity；
-- 宿主机 delegate binary 文件事实；
-- 当前 wrapper/rootfsd 和本地 registry 状态。
+node-agent 定期读取 containerd 主配置、显式 imports/glob imports 和 CRI runtime table，
+在宿主机视图验证源 delegate；导入缺失或循环时失败关闭。它不扫描任意目录猜测 vendor binary。
 
 对每个非 RootPV handler 执行：
 
-1. 读取 handler 名和 runtime type；
-2. runtime type 不是 `io.containerd.runc.v2` 时记录为 unsupported，不生成 adapter；
-3. 从 handler `options.BinaryName` 解析 delegate；
-4. `BinaryName` 为空且 handler 是 stock `runc` 时，按 containerd/runc-v2 默认规则在宿主机解析 `runc`；
-5. 非 runc handler 没有 `BinaryName` 时不猜测厂商路径，记录为 unresolved；
-6. 对 delegate 做 realpath、普通文件、可执行权限和 wrapper 递归检查；
-7. 计算 source handler config digest 和 node-resolved digest；
-8. 标记它是否是本节点 `default_runtime_name`。
+1. 读取 handler 名、runtime type 和节点默认 handler。
+2. runc-v2 从 options.BinaryName 解析 delegate；仅 stock runc 可按默认候选路径解析缺省 binary。
+3. Kata QEMU 从显式 runtime_path 解析 shim，并读取 options.ConfigPath；
+   配置必须只有 hypervisor.qemu，非空 runtime.hypervisor_name 必须为 qemu。
+4. Kata runtime_path/ConfigPath 缺失或类型不支持时，报告 unresolved/unsupported，不生成就绪 adapter。
+5. 对 delegate 做 realpath、普通文件、可执行权限和 RootPV 二进制递归检查。
+6. 自动生成 adapter ID 和 node-resolved digest。Kata digest 包含源 handler 配置及 Kata 配置内容。
+7. 仅把路径无关的 inventory 发布给控制面；真实路径留在节点 registry。
 
 ### 7.2 发布方式
 
@@ -297,7 +307,7 @@ controller 同时监听：
 
 controller 只激活满足以下条件的 handler：
 
-1. 至少一个 Ready 节点把它报告为 resolved runc-v2 handler；
+1. 至少一个有效 Node inventory 把它报告为已解析的受支持 handler；实际调度还需节点和 adapter 就绪；
 2. 它被现有普通 RuntimeClass 引用，或者是某节点的 default handler；
 3. 名称不属于 RootPV Shadow handler；
 4. 相同 handler 在节点间报告的 runtime type 一致。
@@ -410,19 +420,19 @@ amd.com/gpu
 
 ## 10. Node Adapter Reconcile
 
-node-agent 监听系统生成的 catalog，对本节点支持的 adapter 执行统一算法：
+当前 node-agent 根据系统生成的 catalog 执行：
 
-1. 重新确认 source handler 和 catalog 一致；
-2. 从 source handler 解析并验证真实 delegate；
-3. 完整克隆 source handler 配置；
-4. 仅覆盖 `options.BinaryName=/usr/local/bin/rootfs-runtime-wrapper`；
-5. 生成 RootPV Shadow handler；
-6. 生成候选节点 registry；
-7. 验证 TOML，原子更新 containerd 配置；
-8. restart/reload containerd；
-9. 使用 `containerd config dump` 验证实际加载值；
-10. 原子发布 root-owned registry；
-11. 最后发布带 catalog digest 的 readiness label。
+1. 从主配置与 imports 重新确认 source handler 和 runtime type，解析并验证真实 delegate。
+2. 克隆源 handler，保留 vendor options；runc 替换 BinaryName，Kata 替换 runtime_path，
+   保留 ConfigPath，并补充 RootPV annotation 白名单。
+3. 创建受管理的 adapter 别名，编码并校验候选 TOML，原子更新 containerd 主配置。
+4. 写入 0600 节点 registry，记录真实 delegate 和 node-resolved digest。
+5. 在配置变化且 RestartCommand 非空时执行重载/重启；失败时恢复旧主配置，不发布新就绪标签。
+6. 重载步骤成功后发布每个 adapter 的 readiness label。
+
+当前实现没有自动执行 containerd config dump 的事后校验。部署/验证时应检查实际加载结果；
+将重启命令置空只关闭自动重启，不保证新 handler 已被 containerd 加载。
+原子联动回滚 registry、配置并发锁及完整事后 dump 验证属于后续加固目标。
 
 节点 registry 示例：
 
@@ -441,11 +451,11 @@ adapters:
 
 真实 delegate path 在此阶段才出现，并且只存在于节点 root-owned `0600` 文件中。
 
-### 10.1 containerd 配置安全
+### 10.1 containerd 配置安全要求（含后续加固目标）
 
 - 使用 TOML AST 或等价保真模型支持 containerd v1/v2/v3，不按 runtime 名称拼字符串；
 - 保留 source handler 的全部 vendor options；
-- 只覆盖 Shadow handler 的 `BinaryName`；
+- runc 只覆盖 Shadow BinaryName，Kata 只覆盖 Shadow runtime_path；两者补充 RootPV annotation 白名单；
 - 不修改 source handler；
 - 不覆盖非 RootPV 管理的 handler；
 - 使用本地文件锁和配置 fingerprint 防止并发覆盖；
@@ -624,10 +634,14 @@ runtimeAdapterDiscovery:
   enabled: true
   supportedRuntimeTypes:
     - io.containerd.runc.v2
+    - io.containerd.kata-qemu.v2
+    - io.containerd.kata.v2
   maxHandlersPerNode: 64
 ```
 
-`supportedRuntimeTypes` 是 RootPV 版本的安全能力 allowlist，不能通过运行时 ConfigMap 扩展到未知 shim。它不是厂商 runtime 列表。
+当前 supportedRuntimeTypes 与 maxHandlersPerNode 是 values 中的能力/默认值描述，
+并非动态 runtime 注册接口；实际类型判断和默认 handler 数量限制由代码执行。
+修改该列表不能扩展未知 shim。enabled 控制当前自动发现安装路径。
 
 ### 14.3 E2E 准入标记
 
@@ -679,8 +693,8 @@ ecloud.com/rootpv-validation-status=discovered|validated
 
 - 自动发现只读取 containerd 已配置的 source handler，不扫描整个文件系统寻找可执行文件；
 - 只有 stock runc 允许在 `BinaryName` 为空时按 containerd 默认规则解析 `runc`；
-- vendor handler 必须显式配置 `BinaryName`，RootPV 不猜路径；
-- 非 runc-v2 handler 只记录 unsupported，不生成 adapter；
+- vendor runc-v2 handler 必须显式配置 BinaryName；Kata 必须显式配置 runtime_path 和 ConfigPath；
+- 除 runc-v2 和明确配置 QEMU 的 Kata 类型外，其他 handler 记录 unsupported，不生成 adapter；
 - RootPV Shadow handler 排除在发现范围外，防止递归；
 - controller 只激活已有 RuntimeClass 引用或节点默认的 handler；
 - Pod annotation 不能提供 adapter ID 以外的执行信息，mutation/validation 会覆盖或拒绝伪造状态；
@@ -707,7 +721,7 @@ ecloud.com/rootpv-validation-status=discovered|validated
 - source `BinaryName` 自动解析；
 - stock runc 缺省 BinaryName；
 - vendor handler 缺少 BinaryName 时 unresolved；
-- 非 runc-v2 handler unsupported；
+- Kata 的 QEMU 配置、显式路径和 imports；CLH、runsc 等未实现类型 unsupported；
 - binary 缺失、不可执行、symlink 指向 wrapper；
 - default handler 识别；
 - inventory 限制、原子 annotation 更新和 stale node UID 防护。
@@ -726,14 +740,21 @@ ecloud.com/rootpv-validation-status=discovered|validated
 ### 17.4 Node Reconcile 与 Wrapper 测试
 
 - 完整克隆未知 vendor options；
-- 只覆盖 Shadow `BinaryName`；
+- runc 替换 Shadow BinaryName，Kata 替换 Shadow runtime_path，源配置和 vendor options 保留；
 - containerd 配置并发修改、验证失败和自动回滚；
 - registry v2 原子更新；
 - 使用未知名称 synthetic handler 完成 create/state/kill/delete；
 - registry 更新后存量容器仍使用 state 中 delegate；
 - retired adapter 等待 state 清零后清理。
 
-### 17.5 “零 RootPV 配置”门禁 E2E
+### 17.5 Kata + QEMU 测试
+
+Kata 专项测试覆盖 imported handler、QEMU 限制、任务创建/删除与回滚、
+共享 sandbox 的 Shutdown、实际 shim PID、rootfsd 恢复和单写者互斥。
+功能记录见 [2026-10-14 验证](../../tests/e2e/results/kata-qemu-2026-10-14.md)；
+节点/VM 故障、性能、动态 CSI 和通用 Kata 类型的集群组合仍待验证。
+
+### 17.6 “零 RootPV 配置”门禁 E2E
 
 1. 记录已部署 RootPV 镜像 digest；
 2. 在节点安装一个 synthetic runc-v2 handler 和对应 RuntimeClass；
@@ -746,7 +767,7 @@ ecloud.com/rootpv-validation-status=discovered|validated
 
 如果该 E2E 仍要求编辑 RootPV values、模板、脚本或 Go 常量，则本设计没有实现完成。
 
-### 17.6 Ascend NPU E2E
+### 17.7 Ascend NPU E2E
 
 - 普通非 RootPV Ascend Pod 基线通过；
 - Ascend handler 被自动发现为 `ascend-runc-v2`；

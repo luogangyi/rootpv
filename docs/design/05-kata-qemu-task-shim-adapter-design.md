@@ -68,5 +68,7 @@ rootfsd 重启恢复 flock；proxy 或 Kata shim 任一仍存活时保留租约�
 adapter 不匹配、sandbox/sidecar 路径、创建回滚、卸载失败、共享 shim Shutdown 和活跃 shim 租约保留。
 集群验证覆盖 Pod 重建持久化、文件权限/链接、单写者互斥、rootfsd 重启、普通 Kata Pod 与删除清理。
 
-Kata QEMU 的功能证据见 ../user-guide/kata-qemu.md 和 tests/e2e/results/kata-qemu-2026-10-14.md。
+Kata 使用和重建步骤见 [使用指南](../user-guide/kata-qemu.md)，功能证据见
+[2026-10-14 验证记录](../../tests/e2e/results/kata-qemu-2026-10-14.md)，
+完整清单见 [Kata 测试 YAML](../../tests/e2e/manifests/kata-qemu.yaml)。
 此次没有验证节点重启、Kata shim OOM、QEMU 崩溃恢复、跨节点迁移、性能、GPU/设备或 checkpoint 恢复。

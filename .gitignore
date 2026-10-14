@@ -32,7 +32,7 @@ vendor/
 *.crt
 *.kubeconfig
 kubeconfig
-tests/e2e/configs/.ebs-cluster.env
+tests/e2e/configs/.*.env
 
 # Temporary worktrees and tool state
 .worktrees/

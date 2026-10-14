@@ -25,6 +25,21 @@ For changes to node runtime integration, include the tested Kubernetes version, 
 
 RootPV is a node-level runtime integration. Changes that alter runtime adapters, containerd configuration, OverlayFS behavior, admission mutation, storage semantics, or compatibility guarantees should begin with a design proposal in `docs/design/` and include focused unit tests plus end-to-end validation where feasible.
 
+## Runtime integration documentation
+
+When changing a runtime adapter, update the English and Chinese READMEs, deployment guide, Chart README,
+current design, compatibility matrix, and E2E instructions together. Separate historical design decisions and
+dated test evidence from the current implementation. A successful functional case does not establish device,
+performance, dynamic CSI, or crash-recovery support.
+
+For Kata + QEMU, document the original RuntimeClass/handler, runtime type, explicit runtime_path/ConfigPath,
+Kata implementation, hypervisor, guest kernel, storage type, and tested lifecycle cases. Keep the complete
+reusable test manifest and environment example in tests/e2e; keep cluster-specific copies and credentials
+outside versioned sources.
+
+Check local Markdown links, fence/table formatting, YAML and shell syntax, and Helm rendering for changes to
+documentation or examples. New full Go runs are needed when behavior changes, not for prose-only edits.
+
 ## Commit and review expectations
 
 - Use clear, imperative commit subjects.

@@ -20,7 +20,7 @@ Pod annotations + PVC
 原生 containerd overlayfs snapshotter -- 提供不可变镜像 lower layers
           |
           v
-RootPV OCI runtime wrapper -- 挂载单层 OverlayFS，再委托真实 OCI runtime
+RootPV runtime adapter -- runc-v2 使用 OCI wrapper，Kata + QEMU 使用 task shim proxy
           |
           v
 PVC：upperdir + workdir + metadata
@@ -44,13 +44,18 @@ RootPV 仅使用 Kubernetes、containerd、OCI runtime-spec 和 Linux VFS 的公
 - 基于 `io.containerd.runc.v2` 的 runtime adapter；节点已正确安装且可发现的设备专用 runtime 也可接入。
 - Kata + QEMU task-shim adapter；源 handler 需显式配置 `runtime_path` 和 QEMU `ConfigPath`，见 [Kata 使用指南](docs/user-guide/kata-qemu.md)。
 
-首个版本不支持：非 containerd 运行时、非 `overlayfs` snapshotter、rootless 或非特权节点安装、一个根文件系统的读写共享、跨镜像链自动 Reset/Rebase，以及将可写层自动转换为 OCI 镜像。
+当前范围不包括：非 containerd 运行时、非 `overlayfs` snapshotter、rootless 或非特权节点安装、一个根文件系统的读写共享、跨镜像链自动 Reset/Rebase，以及将可写层自动转换为 OCI 镜像。
 
 完整端到端基线覆盖 Linux x86_64、Kubernetes v1.29 系列、containerd 2.1.1（厂商构建）、
 `io.containerd.runc.v2` 运行时，以及动态供给的 ReadWriteOnce 块存储 PVC。在相同平台上，官方
 containerd 1.6.39、1.7.35、2.0.12 和静态 2.1.9 已额外完成动态 PVC 持久化与 Pod 重建验证；这些版本检查
 尚未覆盖完整的恢复、升级、并发和性能用例。当前基线还完成了 rootfsd 与 containerd 服务重启各 3 轮、
 节点重启 3 轮、10 实例并发隔离、同一路径互斥，以及 RootPV Helm 升级/回滚验证。
+
+Kata + QEMU 的限定功能验证组合为 Kubernetes 1.34.3、containerd 2.1.1、Kata 4.2.0 Rust、
+QEMU 11.0.1 和 ext4 local RWO PVC，已覆盖持久化、sidecar、单写互斥、rootfsd 重启与正常删除。
+动态 CSI PVC、节点/VM 故障恢复和性能尚未验证，不能由该功能结果推导；见
+[验证记录](tests/e2e/results/kata-qemu-2026-10-14.md)。
 
 不支持将运行中的 containerd 2.1 状态直接降级为 1.6：候选 1.6.28 可以启动，但不能重用 2.1 的运行时
 状态。跨大版本回退应在排空节点后按受控迁移流程重建运行时状态。当前 Helm 卸载会停止 RootPV 节点代理，
@@ -73,7 +78,8 @@ containerd 1.6.39、1.7.35、2.0.12 和静态 2.1.9 已额外完成动态 PVC �
 | runc-v2 adapter | `BinaryName` delegate 非 wrapper 的自定义 `io.containerd.runc.v2` runtime | — | adapter 发现、生命周期、信号、退出码和恢复 |
 | GPU runtime | NVIDIA（环境具备时分别覆盖 MIG/vGPU）、AMD ROCm、Intel 和 MThreads | — | 设备工作负载、持久化、清理和各设备切分形态 |
 | NPU runtime | Ascend 及其他 runc-v2 兼容加速器；整卡和虚拟/切分形态分别记录 | — | 厂商工作负载、持久化、清理和隔离 |
-| Kata + QEMU | Linux AMD64；Kubernetes 1.34.3；containerd 2.1.1；Kata 4.2.0 Rust；QEMU 11.0.1；ext4 local RWO PVC | [持久化、sidecar 隔离、单写互斥、rootfsd 重启、普通 Kata 与清理](tests/e2e/results/kata-qemu-2026-10-14.md) | 动态 CSI PVC、节点/VM 故障恢复、性能与设备 |\n| Kata、gVisor 与其他独立 shim | `io.containerd.kata.v2`、runsc 和非 runc-v2 的 microVM/shim runtime | gVisor：RootPV opt-in 被拒绝；普通 gVisor Pod 正常运行且未被 RootPV 修改 | Kata CLH、gVisor RootPV 工作负载与其他独立 shim；Kata QEMU 接入见 [Kata 使用指南](docs/user-guide/kata-qemu.md) |
+| Kata + QEMU | Linux AMD64；Kubernetes 1.34.3；containerd 2.1.1；Kata 4.2.0 Rust；QEMU 11.0.1；ext4 local RWO PVC | [持久化、sidecar 隔离、单写互斥、rootfsd 重启、普通 Kata 与清理](tests/e2e/results/kata-qemu-2026-10-14.md) | 动态 CSI PVC、节点/VM 故障恢复、性能与设备 |
+| 其他独立 shim | Kata CLH、runsc 和 QEMU adapter 范围之外的 task shim | gVisor：RootPV opt-in 被拒绝；普通 gVisor Pod 正常运行且未被 RootPV 修改 | Kata CLH、gVisor RootPV 工作负载与其他独立 shim；Kata QEMU 接入见 [Kata 使用指南](docs/user-guide/kata-qemu.md) |
 
 测试用例、验收标准和待寻找的环境见[兼容性验证方案与详细矩阵](docs/design/04-compatibility-validation-plan.md)。
 
@@ -90,6 +96,11 @@ containerd 1.6.39、1.7.35、2.0.12 和静态 2.1.9 已额外完成动态 PVC �
 两种 Helm 安装路径都会仅在带标节点上更新 containerd runtime 配置，并在必要时 reload 或 restart
 containerd。部署前请检查 `charts/rootpv/values.yaml` 中的节点路径、containerd socket 和重启设置，
 并按集群运维规范安排发布窗口。
+
+Kata 功能要求当前 proxy shim 和 Chart installer；使用本分支构建镜像，或核实 CI 制品包含这些改动。
+
+存储策略 values 当前渲染为 ConfigMap，Controller 尚未读取该文件来强制执行 StorageClass allowlist。
+请验证实际 PVC 文件系统和 OverlayFS 能力。
 
 ### 1. 使用社区 CI 制品快速开始
 
@@ -149,27 +160,28 @@ helm upgrade --install rootpv charts/rootpv \
   --wait --timeout 10m
 ```
 
-### 3. 备选方案：使用原生 manifests
+### 3. 备选方案：应用渲染后的 Kubernetes 清单
 
-此路径复用第 2 节构建的镜像，但替代该节的 Helm 安装命令，且不会创建 Helm release。仅在无法或不允许
-使用 Helm，或 GitOps/IaC 流程必须管理仓库中的原始 Kubernetes 资源时使用。
-
-应用 manifests 前，请完成以下准备：
-
-1. 将 `deploy/manifests/50-controller-deployment.yaml` 和 `deploy/manifests/50-daemonset.yaml` 中全部
-   `rootpv:latest` 镜像引用替换为 `<image-repository>:<image-tag>`。
-2. 在 `deploy/manifests/20-config.yaml` 中设置 `config.storagePolicy.allowStorageClasses`，使其包含目标
-   StorageClass。
-3. 为要运行节点代理的节点打标，并确认同一 namespace 中没有 Helm release 正在管理这些资源。
+GitOps 或 kubectl 管理资源时，使用本分支 Chart 和第 2 节构建的镜像渲染清单。
+Helm 仅在渲染阶段需要，目标安装无需 Helm release；同一组资源保持单一管理方。
 
 ```bash
+helm template rootpv charts/rootpv \
+  --namespace rootpv-system --include-crds \
+  --set image.repository=<image-repository> \
+  --set image.tag=<image-tag> \
+  --set-string 'config.storagePolicy.allowStorageClasses[0]=<storage-class>' \
+  > rootpv-rendered.yaml
+
+kubectl create namespace rootpv-system --dry-run=client -o yaml | kubectl apply -f -
 kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
-kubectl apply -f deploy/crds
-kubectl apply -f deploy/manifests
+kubectl apply -f rootpv-rendered.yaml
 ```
 
-后续修改时，更新相同的 manifests 文件后通过 `kubectl` 或 GitOps 系统再次应用。若要切换回 Helm 路径，
-请先完成已有资源的所有权迁移。
+deploy/manifests 的旧静态 installer 使用固定 runc/NVIDIA handler，不安装 Kata proxy。
+自动发现与 Kata 安装应使用当前 Chart 的渲染结果。离线重新渲染会生成新 TLS 证书；
+应用新 Secret 和 caBundle 时，需同时重启 Controller，使其加载匹配证书。
+详细步骤见 [部署指南](docs/user-guide/deployment.md)。
 
 ### 4. 验证部署
 
@@ -234,7 +246,7 @@ volumeMounts:
 anchor 挂载不能删除，仅声明 `volumes` 而没有容器挂载也不能替代它。
 
 `ecloud.com/rootfs-path: containers/app` 指定的是 **PVC 内部的数据目录**，RootPV 在其中
-保存 `upper`、`work` 和 `meta`。Runtime wrapper 将镜像层与持久化的 `upper` 合并，
+保存 `upper`、`work` 和 `meta`。OCI wrapper 或 Kata proxy 将镜像层与持久化的 `upper` 合并，
 作为容器根文件系统 `/`；该注解不会设置容器内的 `mountPath`。若把整个 `rootfs-data`
 卷挂载到 `/data`，应用还会看到 `/data/containers/app/{upper,work,meta}`。
 这个挂载对 rootfs 持久化没有必要，还会让应用直接修改 RootPV 的底层数据，因此不要添加
@@ -248,9 +260,25 @@ kubectl get pod rootpv-demo -o yaml
 
 更多配置和运维信息请参阅[文档索引](docs/README.md)、[部署指南](docs/user-guide/deployment.md)和 [Helm Chart 文档](charts/rootpv/README.md)。
 
+### 6. Kata + QEMU 工作负载
+
+提交原 RuntimeClass：
+
+```yaml
+spec:
+  runtimeClassName: kata-qemu
+```
+
+QEMU adapter 将其映射为 persistent-rootfs-kata-qemu，保留原 scheduling 和 overhead。
+PVC 仍通过 Webhook 注入的只读 anchor 挂载；未被选中的 sidecar 保持普通根文件系统。
+原 handler 的安装要求、非默认路径和操作步骤见 [Kata 使用指南](docs/user-guide/kata-qemu.md)。
+[完整测试 YAML](tests/e2e/manifests/kata-qemu.yaml) 包含 Namespace、PV、PVC 和双容器 Pod。
+原 handler 名称不同于 kata-qemu 时，adapter ID 由 catalog 推导，检查实际生成结果。
+
 ## 验证结果
 
-最近一次集群验证覆盖以下功能场景：
+2026-09-03 的 runc 基线覆盖以下功能场景，见 [功能记录](tests/e2e/results/functional-2026-09-03.md)。
+QEMU adapter 的独立功能证据见 [2026-10-14 Kata 记录](tests/e2e/results/kata-qemu-2026-10-14.md)。
 
 | 功能测试用例 | 结果 |
 | --- | --- |
@@ -262,7 +290,8 @@ kubectl get pod rootpv-demo -o yaml
 | 测试命名空间与 PVC 回收 | 通过 |
 
 性能测试使用 1 轮预热、每个路径 3 轮正式测量和每轮 64MiB 同步写入。两条路径固定使用相同
-镜像、节点、写入量和 Pod 生命周期：
+镜像、节点、写入量和 Pod 生命周期。下表为 [2026-09-03 runc 测量](tests/e2e/results/performance-2026-09-03.md)，
+Kata 性能尚未测量：
 
 | 指标 | 未启用 RootPV | 启用 RootPV | 性能损耗占比 |
 | --- | ---: | ---: | ---: |
