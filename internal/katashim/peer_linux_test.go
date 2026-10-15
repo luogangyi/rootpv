@@ -53,12 +53,15 @@ func TestPeerPIDPreservesConnection(t *testing.T) {
 	}
 	defer server.Close()
 	pid, err := peerPID(client)
-	if os.Geteuid() == 0 {
+	switch os.Geteuid() {
+	case 0:
 		if err != nil || pid != os.Getpid() {
 			t.Fatalf("peer: pid=%d, error=%v", pid, err)
 		}
-	} else if err == nil {
-		t.Fatal("accepted a non-root peer")
+	default:
+		if err == nil {
+			t.Fatal("accepted a non-root peer")
+		}
 	}
 	if err := server.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
