@@ -8,6 +8,13 @@
 
 **项目定位：** 为 Kubernetes 容器提供可在 Pod 重建时候保留 writable rootfs，同时复用原生containerd 管理的不可变镜像层
 
+> **后续演进（2026-10-14）：** 本文保留 2026-07 的立项评审背景与当时的首发建议，
+> 其中“仅 OCI wrapper、人工 adapter、非 runc-v2 全部不支持”的项目范围已部分更新。
+> 当前自动发现见 [catalog 设计](03-configmap-driven-runtime-adapter-extension-design.md)，
+> Kata + QEMU 已有 [独立 task shim adapter](05-kata-qemu-task-shim-adapter-design.md) 和
+> [限定功能验证](../../tests/e2e/results/kata-qemu-2026-10-14.md)。
+> CLH/gVisor 等类型仍无对应 adapter；实际验证范围以 [兼容性矩阵](04-compatibility-validation-plan.md) 为准。
+
 ## 1. 项目摘要
 
 RootPV 是一个面向 Kubernetes 的节点侧持久化 rootfs 项目。它允许用户将容器 writable rootfs 的变化保存到 PVC，在 Pod 删除、重建或容器运行时重启后继续使用这些变化。
@@ -209,7 +216,7 @@ RuntimeClass 是 Kubernetes/CRI 用来选择 containerd runtime handler 的声�
   -> exec 真实 runtime
 ```
 
-admission 会把用户指定的 RuntimeClass 保存到 `ecloud.com/original-runtime-class`，并把 Pod 的 `runtimeClassName` 改为映射后的 RootPV RuntimeClass。该 annotation 用于审计和幂等 mutation；当前 wrapper 不会根据它重新调用原 RuntimeClass，而是根据 wrapper basename 到 delegate binary 的静态配置选择真实 runtime。
+admission 会把用户指定的 RuntimeClass 保存到 `openfuyao.cn/original-runtime-class`，并把 Pod 的 `runtimeClassName` 改为映射后的 RootPV RuntimeClass。该 annotation 用于审计和幂等 mutation；当前 wrapper 不会根据它重新调用原 RuntimeClass，而是根据 wrapper basename 到 delegate binary 的静态配置选择真实 runtime。
 
 因此，用户指定 RuntimeClass 时只有以下情况能够正常工作：
 
@@ -251,11 +258,13 @@ runtimeAdapters:
 
 该模型不要求修改 containerd，也不把 RuntimeClass 当成二次转发目标。它通过显式的一对一适配保留用户原 runtime 的执行语义，同时保证 RootPV wrapper 一定在真实 runtime `create` 前介入。
 
-#### 6.5.3 非 runc-v2 runtime
+#### 6.5.3 非 runc-v2 runtime（原评审边界及后续更新）
 
 使用 `io.containerd.kata.v2`、独立 runsc shim 或其他非 runc-v2 task shim 的 RuntimeClass，不会执行 runc handler 的 `BinaryName`，因此不能仅增加 Shadow RuntimeClass 和 runtime binary wrapper。首个社区版本必须在 admission 阶段给出明确的 `unsupported_runtime_type` 错误，不得静默回退到 runc。
 
-如果后续必须支持此类 runtime，需要提交独立 RFC，评估 shim task API proxy/adapter：由 RootPV shim proxy 在 `Task.Create` 前准备 rootfs，再转发给原 runtime shim。该方向涉及 task API、shim 生命周期、sandbox/VM rootfs 语义和逐 runtime 兼容验证，不纳入首个稳定版本。
+上述限制描述 OCI wrapper 的技术边界。2026-10-14 已对 Kata + QEMU 增加独立 task API proxy，
+详见 [Kata task shim 设计](05-kata-qemu-task-shim-adapter-design.md)。其他未实现类型继续失败关闭；
+不能由 QEMU 结果推导 CLH、runsc 或其他后端通过。
 
 #### 6.5.4 Runtime Adapter 验收要求
 
@@ -443,11 +452,11 @@ kind: Pod
 metadata:
   name: rootpv-workspace
   annotations:
-    ecloud.com/persistent-rootfs: "true"
-    ecloud.com/rootfs-container: workspace
-    ecloud.com/rootfs-volume: rootfs-pvc
-    ecloud.com/rootfs-path: containers/workspace
-    ecloud.com/rootfs-base-image-policy: Strict
+    openfuyao.cn/persistent-rootfs: "true"
+    openfuyao.cn/rootfs-container: workspace
+    openfuyao.cn/rootfs-volume: rootfs-pvc
+    openfuyao.cn/rootfs-path: containers/workspace
+    openfuyao.cn/rootfs-base-image-policy: Strict
 spec:
   containers:
   - name: workspace
@@ -468,8 +477,8 @@ spec:
 ```yaml
 metadata:
   annotations:
-    ecloud.com/persistent-rootfs: "true"
-    ecloud.com/rootfs.spec: >-
+    openfuyao.cn/persistent-rootfs: "true"
+    openfuyao.cn/rootfs.spec: >-
       [
         {"containerName":"dev","volumeName":"rootfs-pvc","path":"containers/dev","baseImagePolicy":"Strict"},
         {"containerName":"tools","volumeName":"rootfs-pvc","path":"containers/tools","baseImagePolicy":"Strict"}
@@ -684,11 +693,13 @@ PVC 必须满足 Linux OverlayFS upperdir 要求：
 
 ### 16.3 Linux kernel
 
-内核必须支持项目规定的 OverlayFS 选项、mount namespace、flock 和所需 xattr。已在 `4.19.0-240.23.36.el8_2.bclinux.x86_64` 完成验证。发行版 backport 可能导致同版本号行为不同，因此安装时需要 capability probe。
+内核必须支持项目规定的 OverlayFS 选项、mount namespace、flock 和所需 xattr。已在 `4.19 系列厂商内核（构建标识已匿名）` 完成验证。发行版 backport 可能导致同版本号行为不同，因此安装时需要 capability probe。
 
 ### 16.4 OCI runtime
 
-当前实现提供 `runc` 和 NVIDIA runtime 的 delegate 映射能力。block-storage 主路径已用 runc 验证；GPU/NVIDIA runtime 仍需要独立 E2E，不能仅因配置存在就宣称已支持。自定义 RuntimeClass 只有完成 6.5 节定义的完整 Runtime Adapter 配置和逐 adapter 验证后才能进入支持矩阵；首发不支持非 runc-v2 task shim。
+原评审覆盖 runc-v2 delegate 模型；GPU/NVIDIA runtime 仍需要独立设备 E2E。
+后续实现已增加自动发现以及 Kata + QEMU task adapter，QEMU 的限定功能验证不替代节点/VM 恢复
+和性能矩阵。当前范围见 [兼容性方案](04-compatibility-validation-plan.md)。
 
 ## 17. 错误处理
 
@@ -834,7 +845,7 @@ RootPV 的数据面不做完整 rootfs copy，因此启动成本主要来自：
 | 部分容器启用会阻塞 sidecar | 当前只支持单容器验证 | wrapper target predicate 和多容器 E2E |
 | admission 仍接受非 Strict | 节点最终 fail closed | webhook 提前拒绝并补负向测试 |
 | 未知或仅配置控制面映射的 RuntimeClass | 未命中 mapping 时 admission fail closed | 引入 Runtime Adapter 注册表，联动校验 Shadow RuntimeClass、节点 handler 和 delegate readiness |
-| 非 runc-v2 RuntimeClass 无法进入 BinaryName wrapper | 当前不支持 | admission 返回 `unsupported_runtime_type`；未来通过独立 shim proxy RFC 评估 |
+| 非 runc-v2 RuntimeClass 无法进入 BinaryName wrapper | QEMU 使用独立 task proxy；其他未实现类型失败关闭 | 逐后端验证，见 Kata 设计与兼容性矩阵 |
 | 节点异常产生 stale state | phase、PID/start time、namespace 与 reconcile | reboot/kill -9 故障矩阵 |
 | upper 长期增长 | 用户可见 PVC 容量 | quota、容量告警和归档工具 |
 | base image 变化 | Strict 拒绝 | 单独设计 Reset/Rebase |

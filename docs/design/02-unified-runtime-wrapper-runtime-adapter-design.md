@@ -6,13 +6,18 @@
 
 **适用范围：** stock containerd、`io.containerd.runc.v2` 兼容 runtime、RootPV flat-lowerdirs 数据路径
 
-> **2026-07-17 设计更新：** 本文关于“管理员手工登记 Runtime Adapter”、人工 adapter ID（例如 `runc-v1`）和静态节点 registry 生成的内容，已由 [RootPV Runtime Adapter 自动发现与配置生成设计](configmap-driven-runtime-adapter-extension-design.md) 取代。统一 wrapper、节点可信 registry、delegation state、fail-closed 和 runc-v2 兼容边界继续有效；新增 runtime 的发现、ID、RuntimeClass route 和 catalog 生成应以新设计为准。
+> **2026-07-17 设计更新：** 本文关于“管理员手工登记 Runtime Adapter”、人工 adapter ID（例如 `runc-v1`）和静态节点 registry 生成的内容，已由 [RootPV Runtime Adapter 自动发现与配置生成设计](03-configmap-driven-runtime-adapter-extension-design.md) 取代。统一 wrapper、节点可信 registry、delegation state、fail-closed 和 runc-v2 兼容边界继续有效；新增 runtime 的发现、ID、RuntimeClass route 和 catalog 生成应以新设计为准。
+
+> **2026-10-14 更新：** 本文的 OCI CLI、BinaryName 和 delegation 设计仅描述 runc-v2 路径。
+> 当前实现额外提供 [Kata + QEMU task shim adapter](05-kata-qemu-task-shim-adapter-design.md)，
+> 通过 runtime_path/task API 接入，不能套用本文的 OCI wrapper 配置。
+> Kata 功能验证范围见 [兼容性矩阵](04-compatibility-validation-plan.md)。
 
 ## 1. 摘要
 
 RootPV 当前只安装一个 `rootfs-runtime-wrapper` 二进制，但通过 `rootfs-runtime-wrapper-runc`、`rootfs-runtime-wrapper-nvidia` 等软链接名称选择后续真实 runtime。该机制安全直接，但每增加一种 runtime 都要同步增加软链接、containerd handler 配置和 wrapper basename 映射，扩展自定义 runtime 时运维成本较高。
 
-本设计将所有受支持的 RootPV containerd handler 统一配置为同一个 `BinaryName`：
+本设计将所有受支持的 runc-v2 RootPV containerd handler 统一配置为同一个 `BinaryName`：
 
 ```text
 /usr/local/bin/rootfs-runtime-wrapper
@@ -64,7 +69,7 @@ delegateRuntimeByWrapper:
 
 ### 4.1 目标
 
-- 所有受支持 adapter 共用同一个 wrapper 可执行文件和 `BinaryName`；
+- 所有受支持的 runc-v2 adapter 共用同一个 OCI wrapper 实现；
 - 支持管理员显式登记新的 runc-v2 兼容 runtime，不再为每个 runtime 创建 wrapper 软链接；
 - 保留原 RuntimeClass 的 runtime 行为、调度约束和 Pod overhead；
 - 在 Webhook 任意执行顺序下，要么收敛到正确的 Shadow RuntimeClass，要么在 admission 阶段明确拒绝；
@@ -77,7 +82,7 @@ delegateRuntimeByWrapper:
 
 - 自动执行 annotation 中给出的任意宿主机 binary；
 - 把所有 runtime 合并成同一个 containerd handler；
-- 自动支持 `io.containerd.kata.v2`、`io.containerd.runsc.v1` 等独立 task shim；
+- 通过本 OCI wrapper 自动支持独立 task shim；Kata QEMU 由 2026-10-14 的独立 task adapter 接入，runsc 仍不支持；
 - 消除 RuntimeClass、containerd handler 和节点 runtime 安装要求；
 - 在 admission 阶段推测尚未完成调度的 Pod 最终会落到哪个节点；
 - 保证未指定 RuntimeClass 的 Pod 跨异构节点重建时仍使用相同 runtime。
@@ -129,7 +134,7 @@ flowchart TB
 建议使用版本化配置：
 
 ```yaml
-apiVersion: ecloud.com/v1alpha1
+apiVersion: openfuyao.cn/v1alpha1
 runtimeAdapters:
   - id: nvidia-v1
     mode: Explicit
@@ -209,12 +214,12 @@ reinvocationPolicy: IfNeeded
 新增或规范以下 annotation：
 
 ```text
-ecloud.com/original-runtime-class
-ecloud.com/effective-runtime-class
-ecloud.com/runtime-adapter-id
-ecloud.com/runtime-adapter-mode
-ecloud.com/runtime-adapter-config-hash
-ecloud.com/persistent-rootfs-mutated
+openfuyao.cn/original-runtime-class
+openfuyao.cn/effective-runtime-class
+openfuyao.cn/runtime-adapter-id
+openfuyao.cn/runtime-adapter-mode
+openfuyao.cn/runtime-adapter-config-hash
+openfuyao.cn/persistent-rootfs-mutated
 ```
 
 约束：
@@ -290,7 +295,7 @@ metadata:
 handler: persistent-rootfs-node-default
 scheduling:
   nodeSelector:
-    ecloud.com/rootpv-node-default-ready: "true"
+    openfuyao.cn/rootpv-node-default-ready: "true"
 ```
 
 每个节点生成同名 containerd handler，但 handler 内容可根据本节点 default runtime 不同而不同：
@@ -299,8 +304,8 @@ scheduling:
 [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.persistent-rootfs-node-default]
   runtime_type = "io.containerd.runc.v2"
   snapshotter = "overlayfs"
-  pod_annotations = ["ecloud.com/*"]
-  container_annotations = ["ecloud.com/*"]
+  pod_annotations = ["openfuyao.cn/*"]
+  container_annotations = ["openfuyao.cn/*"]
 
   [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.persistent-rootfs-node-default.options]
     BinaryName = "/usr/local/bin/rootfs-runtime-wrapper"
@@ -330,7 +335,7 @@ fixedDefaultAdapter: runc-v1
 节点只有同时满足以下条件时才能发布：
 
 ```text
-ecloud.com/rootpv-node-default-ready=true
+openfuyao.cn/rootpv-node-default-ready=true
 ```
 
 - 成功解析 containerd `default_runtime_name`；
@@ -550,7 +555,8 @@ wrapper 必须确认 rootfsd 返回结果与本地 registry 解析一致。两�
 | crun | 可适配 | CLI、features、状态与删除语义验证 |
 | Ascend/ROCm/MThreads runtime | 可适配 | 必须证明使用 runc-v2 BinaryName 路径并逐 adapter E2E |
 | 企业自定义 runc wrapper | 可适配 | 显式 registry、handler clone 和 CLI 兼容验证 |
-| Kata `io.containerd.kata.v2` | 不支持 | 不进入 OCI BinaryName wrapper |
+| Kata + QEMU | 独立 task adapter | 不进入 OCI BinaryName wrapper；明确 QEMU 配置时通过 task proxy，见新设计 |
+| Kata CLH | 不支持 | 无对应 task adapter |
 | gVisor/runsc 独立 shim | 不支持 | 需要独立 shim proxy/adapter RFC |
 
 统一 wrapper 改善的是 runc-v2 adapter 的配置扩展性，不扩大 BinaryName hook 本身的技术边界。
@@ -606,7 +612,7 @@ wrapper 必须确认 rootfsd 返回结果与本地 registry 解析一致。两�
 
 ### 18.2 Runtime Adapter 测试
 
-- 所有 RootPV handler 的 BinaryName 均为统一 wrapper；
+- 所有 runc-v2 RootPV handler 的 BinaryName 指向统一 wrapper 实现的生成别名；
 - adapter ID 到 delegate 的正向、缺失、重复和递归映射；
 - handler options clone 与原 handler 等价；
 - registry 原子更新和配置摘要漂移；
@@ -629,7 +635,7 @@ wrapper 必须确认 rootfsd 返回结果与本地 registry 解析一致。两�
 - 不同节点具有不同 `default_runtime_name`；
 - 默认 handler 修改和 containerd 重启期间 readiness 变化；
 - Pod 跨节点重建后使用目标节点默认 runtime；
-- 默认 runtime 为 Kata/gVisor 时节点明确标记不支持；
+- 默认 runtime 为未实现类型（例如 Kata CLH/gVisor）时明确标记不支持；QEMU 类型按新 task adapter 规则判定；
 - 用户显式 RuntimeClass 优先于 NodeDefault；
 - `Fixed` 策略保持集群固定 adapter。
 

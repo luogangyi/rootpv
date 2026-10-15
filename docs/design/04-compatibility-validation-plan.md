@@ -1,13 +1,19 @@
 # RootPV 兼容性验证方案与矩阵
 
-**文档状态：** 计划中  
-**维护方式：** 每次验证完成后更新本表和对应的可复现测试记录；未记录证据的组合不得标记为支持。  
-**适用版本：** RootPV 当前主干
+**文档状态：** 持续验证与维护（2026-10-14 更新）
+
+**维护方式：** 每次验证完成后更新本表和对应的可复现测试记录；未记录证据的组合不得标记为支持。
+
+**适用版本：** 当前源码；Kata + QEMU 实现见 lgy/kata-qemu 的 33c9c36
+
+openfuyao.cn 域名迁移已完成 [本地冒烟](../../tests/e2e/results/domain-migration-2026-10-14.md)。
+维护结束后已完成 [v1.37.1 新域名集群冒烟](../../tests/e2e/results/domain-smoke-2026-10-14.md)，
+仅覆盖记录中的 runc/Kata 用例，不替代完整发布要求；既有记录对应各自标明的实现版本。
 
 ## 1. 目的与原则
 
 RootPV 的数据路径依赖 Kubernetes 准入、containerd runtime handler、`overlayfs` 挂载语义、PVC
-存储和实际 OCI runtime。仅根据 Kubernetes 或 containerd 的版本号不能推断兼容性。因此，兼容性
+存储，以及实际 OCI runtime 或 Kata task shim/VM。仅根据 Kubernetes 或 containerd 的版本号不能推断兼容性。因此，兼容性
 验证以“可复现的完整组合”为单位，而不是以单个组件版本为单位。
 
 本方案有两个目标：
@@ -26,7 +32,8 @@ RootPV 的数据路径依赖 Kubernetes 准入、containerd runtime handler、`o
 | 已验证 | 已按第 5 节完成必测项，结果、制品 digest、版本信息和日志位置均已记录 | 可以，仅限该完整组合 |
 | 验证中 | 已有环境或执行记录，但未完成全部必测项 | 不可以 |
 | 待验证 | 已规划但尚未执行 | 不可以 |
-| 不支持（架构边界） | 当前实现无法经过 `io.containerd.runc.v2` 的 `BinaryName` wrapper 路径介入 | 不可以；应验证 fail-closed 行为 |
+| 已验证（限定用例） | 指定完整组合的部分用例已有明确证据，尚未完成全部发布要求 | 只说明这些用例通过，不扩大到完整兼容性承诺 |
+| 不支持（架构边界） | 当前没有对应的 OCI wrapper 或 task shim adapter；例如 Kata CLH、runsc | 不可以；应验证 fail-closed 行为 |
 | 不适用 | 与该行目标无关，例如设备 runtime 行不适用于无设备节点 | 不适用 |
 
 “已验证”并不替代上游厂商的 Kubernetes、驱动或设备插件支持声明。发布说明必须同时给出 RootPV
@@ -38,10 +45,10 @@ device plugin 的精确版本。
 所有测试环境应满足以下前提：
 
 - Linux 节点，containerd 使用 `overlayfs` snapshotter；
-- 可动态供给的 filesystem 类型 ReadWriteOnce PVC；首轮使用 ext4 或已确认满足 OverlayFS 要求的 XFS；
+- 使用 Filesystem + ReadWriteOnce PVC；动态块 PVC 与静态 local PVC 的证据分开记录，文件系统需满足 OverlayFS 要求；
 - RootPV 仅部署到明确打标的 canary 节点；
 - 测试镜像、Chart、配置和脚本均使用固定版本或 digest；
-- 设备场景由对应厂商驱动、device plugin、RuntimeClass/handler 先独立验收，RootPV 不负责安装或修复它们。
+- 设备场景由对应厂商驱动、device plugin、RuntimeClass/handler 先独立验收；Kata 场景先独立验收 Kata/QEMU 与原 RuntimeClass。
 
 每次运行在 `tests/e2e/results/` 下新增不含凭据的记录，至少包含以下字段：
 
@@ -50,7 +57,7 @@ device plugin 的精确版本。
 | 测试标识 | 日期、RootPV Git SHA、镜像 digest、Chart 版本/包 digest |
 | 平台 | Kubernetes、containerd、操作系统、内核、CPU 架构、CNI 和 CSI/StorageClass 版本 |
 | 节点与存储 | 节点角色和规格摘要、snapshotter、文件系统、PVC access mode 与 volume mode |
-| runtime | 原 RuntimeClass/handler、runtime type、delegate binary 版本和 Shadow RuntimeClass |
+| runtime | 原 RuntimeClass/handler、runtime type、delegate 版本和 Shadow RuntimeClass；Kata 额外记录 runtime 实现、hypervisor、guest kernel 与共享文件系统 |
 | 设备 | 厂商、型号/切分形态、驱动、device plugin、容器运行时集成版本；无设备时标记“无” |
 | 执行 | 配置文件模板版本、测试脚本命令、开始/结束时间、轮次和失败重试次数 |
 | 结果 | 第 5 节各用例结果、关键日志/事件位置、性能原始数据和已知限制 |
@@ -68,23 +75,25 @@ device plugin 的精确版本。
 | --- | --- | --- | --- | --- |
 | Kubernetes | v1.27 系列 | 选择一个受支持的 containerd 1.6/1.7 组合 | stock `io.containerd.runc.v2` | 待验证 |
 | Kubernetes | v1.28 系列 | 选择一个受支持的 containerd 1.7 组合 | stock `io.containerd.runc.v2` | 待验证 |
-| Kubernetes | v1.29 系列 | 基线组合；覆盖当前 E2E 场景 | stock `io.containerd.runc.v2` | 验证中（2.1.1+aiinfra：基础功能、性能、R01/R02/R03 各连续 3 轮、C07 并发与互斥、U01 Helm 升级/回滚；官方 1.6.39、1.7.35、2.0.12 和静态 2.1.9 已完成 C04） |
+| Kubernetes | v1.29 系列 | 基线组合；覆盖当前 E2E 场景 | stock `io.containerd.runc.v2` | 验证中（2.1.1（厂商构建）：基础功能、性能、R01/R02/R03 各连续 3 轮、C07 并发与互斥、U01 Helm 升级/回滚；官方 1.6.39、1.7.35、2.0.12 和静态 2.1.9 已完成 C04） |
 | Kubernetes | v1.30 系列 | 选择一个受支持的 containerd 1.7/2.0 组合 | stock `io.containerd.runc.v2` | 待验证 |
+| Kubernetes / Kata 功能组合 | v1.34.3（厂商构建） + containerd 2.1.1 + amd64 + ext4 local PVC | QEMU task adapter 的独立功能路径 | Kata 4.2.0 Rust + QEMU 11.0.1 | 已验证（限定用例）：见 [2026-10-14 记录](../../tests/e2e/results/kata-qemu-2026-10-14.md)，不替代完整 C01–C10 |
+| Kubernetes / 新域名冒烟 | v1.37.1 + containerd 2.1.1 + amd64 + ext4 local PVC | openfuyao.cn 下的启动、重建、sidecar、准入和清理 | runc-v2 与 Kata 4.2.0 Rust + QEMU 11.0.1 | 已验证（限定用例）：见 [迁移后冒烟](../../tests/e2e/results/domain-smoke-2026-10-14.md)，不替代完整 C/R/U 或网络验证 |
 | Kubernetes | v1.31 及后续受支持系列 | 每新增一个项目支持的 Kubernetes minor 至少选择一个组合 | stock `io.containerd.runc.v2` | 待验证 |
 | containerd | 1.6.x | 在一个受支持 Kubernetes 版本上完整验证 | stock `io.containerd.runc.v2` | 验证中（官方 1.6.39 在 Kubernetes v1.29 完成 C04；切换后先重建节点 CSI 插件 Pod） |
 | containerd | 1.7.x | 在两个不同 Kubernetes minor 上完整验证 | stock `io.containerd.runc.v2` | 验证中（官方 1.7.35 在 Kubernetes v1.29 完成 C04） |
 | containerd | 2.0.x | 在一个受支持 Kubernetes 版本上完整验证 | stock `io.containerd.runc.v2` | 验证中（官方 2.0.12 在 Kubernetes v1.29 完成 C04） |
-| containerd | 2.1.x | 作为当前基线持续回归 | stock `io.containerd.runc.v2` | 验证中（2.1.1+aiinfra：基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01；官方静态 2.1.9：PVC 持久化与 Pod 重建。直接降级到 1.6.28 不可复用运行中 2.1 状态） |
-| CPU 架构 | linux/amd64 | 每个 containerd 大版本至少一个基础组合 | stock `io.containerd.runc.v2` | 验证中（Kubernetes v1.29、containerd 2.1.1+aiinfra 基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01） |
+| containerd | 2.1.x | 作为当前基线持续回归 | stock `io.containerd.runc.v2` | 验证中（2.1.1（厂商构建）：基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01；官方静态 2.1.9：PVC 持久化与 Pod 重建。直接降级到 1.6.28 不可复用运行中 2.1 状态） |
+| CPU 架构 | linux/amd64 | 每个 containerd 大版本至少一个基础组合 | stock `io.containerd.runc.v2` | 验证中（Kubernetes v1.29、containerd 2.1.1（厂商构建） 基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01） |
 | CPU 架构 | linux/arm64 | 至少覆盖一个 Kubernetes/containerd 基础组合及一个设备组合 | stock `io.containerd.runc.v2` | 待验证 |
 | 操作系统/内核 | 主流发行版的 LTS 内核 | 每个新内核系列执行 OverlayFS 和恢复用例 | stock `io.containerd.runc.v2` | 待验证 |
-| OverlayFS 存储 | RWO block PVC + ext4 | 作为所有组合的首选基线 | stock `io.containerd.runc.v2` | 验证中（Kubernetes v1.29、containerd 2.1.1+aiinfra 基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01） |
+| OverlayFS 存储 | RWO block PVC + ext4 | 作为所有组合的首选基线 | stock `io.containerd.runc.v2` | 验证中（Kubernetes v1.29、containerd 2.1.1（厂商构建） 基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01） |
 | OverlayFS 存储 | RWO block PVC + XFS | 单独确认 XFS/OverlayFS 所需 mount 与内核能力 | stock `io.containerd.runc.v2` | 待验证 |
 
 不把网络文件系统、RWX 多节点共享、非 `overlayfs` snapshotter 或 rootless 节点纳入本矩阵；它们超出
 当前范围，需要独立设计和安全评审后才可立项。
 
-### 4.2 OCI runtime 与设备矩阵
+### 4.2 Runtime 与设备矩阵
 
 设备类别不是只按硬件品牌划分：同一厂商的整卡、MIG/vGPU、虚拟化切分、不同驱动或不同
 device plugin 版本均是独立组合。每个“待验证”行都应先确认 source RuntimeClass 在未启用 RootPV
@@ -92,7 +101,7 @@ device plugin 版本均是独立组合。每个“待验证”行都应先确认
 
 | 类别 | 首批目标形态 | RootPV 验证方式 | 计划级别 | 当前状态 |
 | --- | --- | --- | --- | --- |
-| 标准 OCI runtime | runc / `io.containerd.runc.v2` | 完整正向 E2E 与恢复测试 | 发布阻塞 | 验证中（Kubernetes v1.29、containerd 2.1.1+aiinfra、amd64 基础功能、性能与 rootfsd 重启） |
+| 标准 OCI runtime | runc / `io.containerd.runc.v2` | 完整正向 E2E 与恢复测试 | 发布阻塞 | 验证中（Kubernetes v1.29、containerd 2.1.1（厂商构建）、amd64 基础功能、性能与 rootfsd 重启） |
 | runc-v2 自定义 runtime | `BinaryName` 指向非 wrapper 的 delegate | 验证 adapter 发现、参数/信号/退出码、create/delete/state 和重启恢复 | 高 | 待验证 |
 | NVIDIA GPU | 整卡；MIG；有 vGPU 环境时单列 | GPU 分配、`nvidia-smi`/工作负载、持久化写入、重建与清理 | 高 | 待验证 |
 | AMD GPU/ROCm | 整卡；有切分能力时单列 | GPU 工作负载、设备节点/环境保留、持久化与清理 | 高 | 待验证 |
@@ -101,13 +110,15 @@ device plugin 版本均是独立组合。每个“待验证”行都应先确认
 | Ascend NPU | 训练/推理整卡；910/310 等可获得型号分别记录 | NPU 工作负载、设备节点/环境、持久化、重建和清理 | 高 | 待验证 |
 | Ascend NPU 切分 | 虚拟 NPU、资源切分或调度插件形态 | 每种切分策略独立完成整套 NPU E2E，不从整卡结果推导 | 高 | 待验证 |
 | 其他 NPU/加速器 | 厂商 runtime 属于 runc-v2 BinaryName 模型 | 按“runc-v2 自定义 runtime + 设备 E2E”执行 | 中 | 待验证 |
-| Kata Containers | `io.containerd.kata.v2`，含 QEMU/Cloud Hypervisor 等可用后端 | RootPV opt-in 必须在准入/就绪阶段明确拒绝；未 opt-in Kata Pod 必须不受影响 | 发布阻塞的负向用例 | 不支持（架构边界） |
+| Kata + QEMU（Rust） | io.containerd.kata-qemu.v2；显式 runtime_path/ConfigPath；flat-lowerdirs | task proxy 正向持久化、多容器、互斥、rootfsd 重启和清理 | 已接入，继续补全发布矩阵 | 已验证（限定用例）：Kata 4.2.0 / QEMU 11.0.1 / ext4 local PVC，见结果记录 |
+| Kata 通用 runtime type / Go runtime | 明确 QEMU 配置的 io.containerd.kata.v2；其他 Kata 实现/版本 | 分别完成配置发现、shim 协议和正向 E2E | 高 | 已有配置/单元测试；真实集群组合待验证 |
+| Kata Cloud Hypervisor | kata-clh 等独立类型或非 QEMU 配置 | opt-in 拒绝或无就绪 adapter；普通 Pod 回归 | 负向用例 | 不支持；完整 workload 负向 E2E 待验证 |
 | gVisor | runsc 独立 shim | RootPV opt-in 必须明确拒绝；未 opt-in gVisor Pod 必须不受影响 | 发布阻塞的负向用例 | 不支持（架构边界；M01/M02 已验证） |
 | 其他 microVM/独立 shim | 非 `io.containerd.runc.v2` task shim | 作为不支持类型完成 fail-closed 回归；若要支持需独立 RFC | 观察 | 不支持（架构边界） |
 
-Kata、gVisor 和其他独立 task shim 的“通过”仅表示拒绝行为符合预期，不表示 RootPV 持久根目录能够在
-其中运行。若社区计划支持任一 microVM runtime，必须先完成 shim proxy/adapter 的架构 RFC、威胁建模和
-逐后端 E2E；不得通过将其 RuntimeClass 强行改为 runc 来规避验证。
+Kata + QEMU 已通过独立 task adapter 的限定正向功能验证；它不使用 runc 的 BinaryName hook。
+CLH、gVisor 和其他未实现 task shim 的“通过”仅指负向用例。QEMU 的结果不能推导其他 hypervisor、
+Kata 实现或版本通过；新增后端仍需独立设计和 E2E。
 
 ### 4.3 组合优先级
 
@@ -117,7 +128,8 @@ Kata、gVisor 和其他独立 task shim 的“通过”仅表示拒绝行为符�
 | P1：版本兼容 | 验证 Kubernetes/containerd 主版本差异 | v1.27/1.6、v1.28/1.7、v1.30/2.0 等受支持配对 | 每个组合完成全部基础用例 |
 | P2：架构与存储 | 验证 arm64、内核、XFS | arm64 基础组合；不同内核和 XFS 环境 | 每个高风险维度在至少一个基础组合完成全部基础用例 |
 | P3：设备 runtime | 验证厂商 adapter 和设备工作负载 | 各厂商真实设备节点及匹配 driver/device plugin | 设备用例 + 基础用例全部通过，且记录厂商栈版本 |
-| P4：microVM 负向兼容 | 固化安全边界，避免静默错误路径 | Kata、gVisor 和一个其他独立 shim（可获得时） | opt-in 明确拒绝、普通工作负载不受影响 |
+| P4：Kata QEMU 正向兼容 | 完成已接入 task adapter 的发布覆盖 | QEMU Rust、通用 Kata type、Go runtime、动态 CSI | 专项 KQ 用例与适用 C/R/U 用例，分别记录证据 |
+| P5：未支持 shim 负向兼容 | 固化安全边界，避免静默错误路径 | Kata CLH、gVisor 和其他未实现 shim | opt-in 明确拒绝或不就绪、普通工作负载不受影响 |
 
 ## 5. 单个组合的测试用例与通过标准
 
@@ -203,13 +215,36 @@ PVC 对照；U03 必须最后执行，并使用专用短生命周期测试安装
 | D05 | 故障清理 | 删除/强制删除后设备资源可重新分配，且 RootPV 无残留 mount 或 lease |
 | D06 | 切分隔离 | 对 MIG、vGPU、虚拟 NPU 等形态，分别验证资源边界、重建和其他切分实例不受影响 |
 
-### 5.4 microVM 与独立 shim 的负向用例
+### 5.4 未支持 microVM 与独立 shim 的负向用例
+
+本节适用于 Kata CLH、gVisor 和其他未实现类型，不用于拒绝已接入的 QEMU adapter。
 
 | 编号 | 用例 | 通过标准 |
 | --- | --- | --- |
-| M01 | RootPV opt-in | 使用 Kata/gVisor/其他独立 shim 的 RootPV opt-in Pod 被明确拒绝，错误信息说明不支持的 runtime type |
+| M01 | RootPV opt-in | 使用 Kata CLH/gVisor/其他未实现独立 shim 的 RootPV opt-in Pod 被明确拒绝，错误信息说明不支持的 runtime type |
 | M02 | 非 opt-in 回归 | 相同 runtime 的普通 Pod 能按其原有路径运行，RootPV 不修改其 handler、配置或运行结果 |
 | M03 | 配置完整性 | 节点代理不为不支持 runtime 创建 Shadow handler、wrapper delegate 或误导性的 ready 标签 |
+
+### 5.5 Kata + QEMU 专项用例
+
+| 编号 | 用例 | 当前证据与待补项 |
+| --- | --- | --- |
+| KQ01 | 源 runtime 与发现 | 原 QEMU RuntimeClass 可运行；imports 中的 QEMU handler 自动进入 inventory/catalog/registry；已通过 |
+| KQ02 | 调度与多容器 | Shadow 保留原 scheduling/overhead；app 和 sidecar 在同一 QEMU sandbox 中运行；已通过 |
+| KQ03 | rootfs 重建与 sidecar 隔离 | app 内容、0640 权限与符号链接在两次复用后保留，sidecar 标记不保留；已通过 |
+| KQ04 | 单写者互斥 | 同 PVC/path 的第二个 Pod 被 persistent_upper_in_use 拒绝，原数据完整；已通过单轮 |
+| KQ05 | rootfsd 重启 | 活跃写层锁恢复，已有 app 可读，随后可正常释放；已通过单轮；不等同于完整 C06 |
+| KQ06 | 正常删除 | Kata Delete 后 merged 消失、state 删除、lease released；已通过；强制删除与 OOM 待验证 |
+| KQ07 | 普通 Kata 回归 | 不 opt-in 的 Pod 保持原 RuntimeClass、没有 adapter annotation；已通过 |
+| KQ08 | 发布矩阵补全 | 动态 CSI、containerd/节点重启、QEMU/代理崩溃、升级回滚、性能、设备、checkpoint 恢复待验证 |
+| KQ09 | 配置与 peer 校验失败 | 单元测试覆盖缺失 QEMU 配置、摘要读取/编码错误、空或非 root socket 凭据、凭据检查后的连接与 deadline；不替代真实集群故障注入 |
+
+证据组合：Linux AMD64、Kubernetes v1.34.3（厂商构建）、containerd 2.1.1、
+Kata 4.2.0 Rust、QEMU 11.0.1、guest kernel 6.18.35、ext4 local RWO PVC。
+[详细记录](../../tests/e2e/results/kata-qemu-2026-10-14.md)中的功能结果不补齐 C04 的动态 CSI、
+C06 的所有重启类型或 C10 的性能基线。新可复用清单见
+[tests/e2e/manifests/kata-qemu.yaml](../../tests/e2e/manifests/kata-qemu.yaml)，
+运行与清理步骤见 [Kata 使用指南](../user-guide/kata-qemu.md)。
 
 ## 6. 自动化、环境接入与结果发布
 
@@ -217,10 +252,10 @@ PVC 对照；U03 必须最后执行，并使用专用短生命周期测试安装
 扩展，所有环境相关参数继续仅放在 Git 忽略的 `.env` 配置中：
 
 1. 为每个矩阵组合建立不含凭据的配置样例，例如 `configs/example-nvidia.env`、`configs/example-ascend.env`；
-2. 增加 `RUNTIME_CLASS`、目标 node selector、设备资源名/数量、厂商诊断命令和预期拒绝原因等参数，禁止在
+2. 使用现有 `ORIGINAL_RUNTIME_CLASS` 参数，并增加目标 node selector、设备资源名/数量、厂商诊断命令和预期拒绝原因等参数，禁止在
    shell 脚本中按厂商名称硬编码分支；
-3. 增加设备 E2E、恢复 E2E 和 microVM 负向 E2E，复用功能测试的命名空间前缀、超时和清理保护；
-4. CI 至少运行 P0；需要特定硬件或许可证的 P3/P4 测试由专用环境定期执行，并将结果归档到
+3. 增加设备 E2E、恢复 E2E、Kata QEMU 正向 E2E 和未支持 shim 负向 E2E，复用功能测试的命名空间前缀、超时和清理保护；
+4. CI 至少运行 P0；需要特定硬件或许可证的 P3/P4/P5 测试由专用环境定期执行，并将结果归档到
    `tests/e2e/results/`；
 5. 每次新增“已验证”组合时，同步更新本表、根 README 的当前范围说明和相应测试记录。
 
@@ -232,7 +267,8 @@ PVC 对照；U03 必须最后执行，并使用专用短生命周期测试安装
 2. amd64 和 arm64 Linux 节点，覆盖至少两类内核/发行版；
 3. ext4 与 XFS 的 RWO block PVC；
 4. NVIDIA（含 MIG/vGPU）、AMD ROCm、Intel、MThreads GPU，以及 Ascend 整卡和虚拟 NPU 节点；
-5. 安装 Kata Containers、gVisor/runsc 或其他独立 shim 的集群，用于负向兼容回归。
+5. 配置 QEMU 的 Kata 集群，用于补全动态 CSI、Go runtime、故障恢复和性能验证；
+6. 配置 Kata CLH、gVisor/runsc 或其他未实现 shim 的集群，用于负向兼容回归。
 
 环境接入前应确认可以创建隔离 namespace、使用专用 RWO PVC、在 canary 节点部署特权 RootPV 组件，并能够
 收集必要的节点诊断信息。任何包含生产负载、共享凭据或无法清理测试 PVC 的环境都不应直接用于本方案。

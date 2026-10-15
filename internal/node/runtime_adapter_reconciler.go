@@ -124,7 +124,7 @@ func PublishAdapterReadiness(ctx context.Context, client kubernetes.Interface, n
 	}
 	labels := map[string]any{}
 	for key := range node.Labels {
-		if strings.HasPrefix(key, "ecloud.com/rootpv-adapter-") {
+		if strings.HasPrefix(key, "openfuyao.cn/rootpv-adapter-") {
 			labels[key] = nil
 		}
 	}
@@ -132,7 +132,7 @@ func PublishAdapterReadiness(ctx context.Context, client kubernetes.Interface, n
 		if adapterID == "" || value == "" {
 			continue
 		}
-		labels["ecloud.com/rootpv-adapter-"+adapterID] = value
+		labels["openfuyao.cn/rootpv-adapter-"+adapterID] = value
 	}
 	payload, err := json.Marshal(map[string]any{"metadata": map[string]any{"labels": labels}})
 	if err != nil {

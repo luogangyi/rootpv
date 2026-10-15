@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/name: persistent-rootfs
     app.kubernetes.io/part-of: rootpv
 webhooks:
-- name: mpod.persistent-rootfs.ecloud.com
+- name: mpod.persistent-rootfs.openfuyao.cn
   admissionReviewVersions:
   - v1
   sideEffects: None
@@ -57,7 +57,7 @@ metadata:
     app.kubernetes.io/name: persistent-rootfs
     app.kubernetes.io/part-of: rootpv
 webhooks:
-- name: vpod.persistent-rootfs.ecloud.com
+- name: vpod.persistent-rootfs.openfuyao.cn
   admissionReviewVersions:
   - v1
   sideEffects: None

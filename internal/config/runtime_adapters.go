@@ -23,6 +23,8 @@ import (
 const (
 	RuntimeAdapterFormatVersion = "rootpv-runtime-adapters-v1"
 	RuncV2RuntimeType           = "io.containerd.runc.v2"
+	KataV2RuntimeType           = "io.containerd.kata.v2"
+	KataQemuRuntimeType         = "io.containerd.kata-qemu.v2"
 	maxRuntimeAdapterIDLength   = 48
 )
 
@@ -190,4 +192,13 @@ func (a RuntimeAdapter) ClusterDigest() (string, error) {
 	}
 	sum := sha256.Sum256(data)
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+// IsKataQemuRuntimeType deliberately excludes CLH and unrelated task shims.
+func IsKataQemuRuntimeType(runtimeType string) bool {
+	return runtimeType == KataQemuRuntimeType || runtimeType == KataV2RuntimeType
+}
+
+func SupportedRuntimeType(runtimeType string) bool {
+	return runtimeType == RuncV2RuntimeType || IsKataQemuRuntimeType(runtimeType)
 }

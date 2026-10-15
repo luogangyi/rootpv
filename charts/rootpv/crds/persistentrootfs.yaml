@@ -1,9 +1,9 @@
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: persistentrootfses.ecloud.com
+  name: persistentrootfses.openfuyao.cn
 spec:
-  group: ecloud.com
+  group: openfuyao.cn
   scope: Namespaced
   names:
     plural: persistentrootfses

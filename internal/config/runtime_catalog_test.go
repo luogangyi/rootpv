@@ -71,7 +71,7 @@ func TestBuildRuntimeCatalogFailsClosedForUnresolvedAndUnsupportedHandlers(t *te
 		NodeUID: "node-a",
 		Handlers: []DiscoveredRuntimeHandler{
 			{Name: "ascend", RuntimeType: RuncV2RuntimeType, AdapterID: "ascend-runc-v2", Resolved: false, Reason: "delegate_missing"},
-			{Name: "kata", RuntimeType: "io.containerd.kata.v2", Resolved: true, Reason: "unsupported_runtime_type"},
+			{Name: "kata", RuntimeType: "io.containerd.runsc.v1", Resolved: true, Reason: "unsupported_runtime_type"},
 		},
 	}}, []RuntimeClassSource{{Name: "ascend", Handler: "ascend"}, {Name: "kata", Handler: "kata"}})
 	if err != nil {

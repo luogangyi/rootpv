@@ -59,7 +59,7 @@ nodeAgent:
   allowedOverlaySnapshotRoots:
   - /var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots
   nodeSelector:
-    ecloud.com/persistent-rootfs: "true"
+    openfuyao.cn/persistent-rootfs: "true"
   tolerations:
   - operator: Exists
   resources: {}
@@ -131,6 +131,8 @@ runtimeAdapterDiscovery:
   enabled: true
   supportedRuntimeTypes:
   - io.containerd.runc.v2
+  - io.containerd.kata-qemu.v2
+  - io.containerd.kata.v2
   maxHandlersPerNode: 64
 
 webhook:

@@ -21,8 +21,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/BurntSushi/toml"
-
 	"gitcode.com/openFuyao/rootpv/internal/config"
 )
 
@@ -40,13 +38,9 @@ type RuntimeDiscoveryOptions struct {
 // 不扫描任意宿主机目录猜测厂商二进制，避免把非预期程序加入 RootPV 路由。
 func DiscoverRuntimeInventory(configPath string, opts RuntimeDiscoveryOptions) (config.RuntimeInventory, error) {
 	opts = opts.withDefaults()
-	data, err := os.ReadFile(configPath)
+	raw, data, err := loadContainerdConfig(configPath, opts.HostRoot)
 	if err != nil {
 		return config.RuntimeInventory{}, err
-	}
-	var raw map[string]any
-	if _, err := toml.Decode(string(data), &raw); err != nil {
-		return config.RuntimeInventory{}, fmt.Errorf("decode containerd config: %w", err)
 	}
 	inventory := config.RuntimeInventory{
 		NodeUID:                opts.NodeUID,
@@ -105,7 +99,7 @@ func (opts RuntimeDiscoveryOptions) withDefaults() RuntimeDiscoveryOptions {
 		opts.DefaultRuncCandidates = []string{"/usr/local/sbin/runc", "/usr/bin/runc"}
 	}
 	if len(opts.WrapperPaths) == 0 {
-		opts.WrapperPaths = []string{"/usr/local/bin/rootfs-runtime-wrapper"}
+		opts.WrapperPaths = []string{"/usr/local/bin/rootfs-runtime-wrapper", "/usr/local/bin/containerd-shim-rootpv-kata-v2"}
 	}
 	return opts
 }
@@ -113,11 +107,18 @@ func (opts RuntimeDiscoveryOptions) withDefaults() RuntimeDiscoveryOptions {
 // discoverHandler 解析单个 runc v2 handler 的真实 delegate 路径，并生成节点解析摘要。
 func discoverHandler(name string, table map[string]any, opts RuntimeDiscoveryOptions) config.DiscoveredRuntimeHandler {
 	handler := config.DiscoveredRuntimeHandler{Name: name, RuntimeType: stringValue(table["runtime_type"])}
-	if handler.RuntimeType != config.RuncV2RuntimeType {
+	if !config.SupportedRuntimeType(handler.RuntimeType) {
 		handler.Reason = "unsupported_runtime_type"
 		return handler
 	}
 	delegate := stringValue(mapValue(table["options"])["BinaryName"])
+	if config.IsKataQemuRuntimeType(handler.RuntimeType) {
+		delegate = stringValue(table["runtime_path"])
+		if err := validateKataQemuConfig(table, opts.HostRoot); err != nil {
+			handler.Reason = err.Error()
+			return handler
+		}
+	}
 	if delegate == "" && name == "runc" {
 		for _, candidate := range opts.DefaultRuncCandidates {
 			if executable(hostPath(opts.HostRoot, candidate)) {
@@ -140,9 +141,12 @@ func discoverHandler(name string, table map[string]any, opts RuntimeDiscoveryOpt
 		handler.Reason = "adapter_id_invalid"
 		return handler
 	}
-	handler.AdapterID = id
-	handler.Resolved = true
-	handler.NodeResolvedDigest = sha256Hex([]byte(name + "\x00" + handler.RuntimeType + "\x00" + resolved))
+	digest, err := resolvedHandlerDigest(name, handler.RuntimeType, resolved, table, opts.HostRoot)
+	if err != nil {
+		handler.Reason = "runtime_digest_unavailable"
+		return handler
+	}
+	handler.AdapterID, handler.Resolved, handler.NodeResolvedDigest = id, true, digest
 	return handler
 }
 

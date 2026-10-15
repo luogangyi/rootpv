@@ -24,8 +24,8 @@ import (
 )
 
 const (
-	LabelInstallIntent         = "ecloud.com/persistent-rootfs"
-	LabelPersistentRootfsReady = "ecloud.com/persistent-rootfs-ready"
+	LabelInstallIntent         = "openfuyao.cn/persistent-rootfs"
+	LabelPersistentRootfsReady = "openfuyao.cn/persistent-rootfs-ready"
 	defaultWrapperPath         = "/host/usr/local/bin/rootfs-runtime-wrapper"
 	defaultRootfsdSocket       = "/run/persistent-rootfsd/rootfsd.sock"
 )

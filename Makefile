@@ -14,6 +14,7 @@ build:
 	go build ./cmd/persistent-rootfs-controller
 	go build ./cmd/persistent-rootfsd
 	go build ./cmd/rootfs-runtime-wrapper
+	go build ./cmd/containerd-shim-rootpv-kata-v2
 
 image:
 	docker build --platform $(PLATFORM) -t $(IMAGE) .

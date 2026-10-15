@@ -77,20 +77,31 @@ func InspectAndValidateSourceOverlay(r io.Reader, target string, api SourceOverl
 		return SourceOverlay{}, fmt.Errorf("source_mount_api_mismatch: kernel lower=%v upper=%q work=%q, API lower=%v upper=%q work=%q",
 			kernel.LowerDirs, kernel.UpperDir, kernel.WorkDir, api.LowerDirs, api.UpperDir, api.WorkDir)
 	}
+	if err := ValidateSourceOverlay(api, allowedRoots); err != nil {
+		return SourceOverlay{}, err
+	}
+	api.MountPoint = filepath.Clean(target)
+	return api, nil
+}
+
+// ValidateSourceOverlay validates trusted containerd snapshot paths before a shim mounts them.
+func ValidateSourceOverlay(api SourceOverlay, allowedRoots []string) error {
+	if len(api.LowerDirs) == 0 {
+		return fmt.Errorf("source_filesystem_not_overlay")
+	}
 	for _, path := range append(append([]string{}, api.LowerDirs...), api.UpperDir, api.WorkDir) {
 		if err := validateSnapshotDir(path, allowedRoots); err != nil {
-			return SourceOverlay{}, err
+			return err
 		}
 	}
 	entries, err := os.ReadDir(api.UpperDir)
 	if err != nil {
-		return SourceOverlay{}, fmt.Errorf("source_overlay_options_invalid: read active upper %q: %w", api.UpperDir, err)
+		return fmt.Errorf("source_overlay_options_invalid: read active upper %q: %w", api.UpperDir, err)
 	}
 	if len(entries) != 0 {
-		return SourceOverlay{}, fmt.Errorf("source_active_upper_not_empty: %q contains %d entries", api.UpperDir, len(entries))
+		return fmt.Errorf("source_active_upper_not_empty: %q contains %d entries", api.UpperDir, len(entries))
 	}
-	api.MountPoint = filepath.Clean(target)
-	return api, nil
+	return nil
 }
 
 func inspectOverlayMount(r io.Reader, target string) (SourceOverlay, error) {

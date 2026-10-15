@@ -1,7 +1,7 @@
 # RootPV 专项恢复验证记录
 
 - 日期：2026-09-15
-- 平台：Kubernetes v1.29 系列；linux/amd64；containerd 2.1.1+aiinfra；stock `io.containerd.runc.v2`；`overlayfs`；RWO ext4 块存储 PVC
+- 平台：Kubernetes v1.29 系列；linux/amd64；containerd 2.1.1（厂商构建）；stock `io.containerd.runc.v2`；`overlayfs`；RWO ext4 块存储 PVC
 - 节点范围：已 cordon 的专用测试节点；执行前已迁走普通工作负载，测试后仅保留节点 DaemonSet 与系统组件
 - 测试制品：基于本次工作区源码构建的临时镜像，digest 为 `sha256:cdf1a830deaadbc15612586a6969a03c28dab87a784aefbbd0f987844e5447b9`
 
@@ -17,7 +17,7 @@
 | C07-A | 1/1 | 并发创建 10 个独立 PVC/RootPV Pod，并全部删除重建 | 通过 | 10 个动态 ext4 PVC 均成功绑定；每个实例重建后均读回自身标记，未发生串写 |
 | C07-B | 1/1 | 两个 Pod 并发申请同一 PVC 的同一路径 rootfs | 通过 | 仅一个 Pod 成功运行；另一个被 runtime wrapper 拒绝创建，已验证单写互斥 |
 | U01 | 1/1 | 用当前源码构建镜像升级 Helm release，再回滚到社区镜像 | 通过 | 升级期创建的 RootPV 标记在回滚后读回，并可继续写入 |
-| U02 | 1/1 | 将运行中节点从 containerd 2.1.1+aiinfra 直接切换到 1.6.28，再恢复 | 不通过（直接降级） | 1.6.28 可启动，但不能重用 2.1 运行时状态，原 sandbox 保持 NotReady；已按校验和恢复 2.1.1+aiinfra，恢复后新的 RootPV PVC 用例通过 |
+| U02 | 1/1 | 将运行中节点从 containerd 2.1.1（厂商构建） 直接切换到 1.6.28，再恢复 | 不通过（直接降级） | 1.6.28 可启动，但不能重用 2.1 运行时状态，原 sandbox 保持 NotReady；已按校验和恢复 2.1.1（厂商构建），恢复后新的 RootPV PVC 用例通过 |
 | U03 | 1/1 | 卸载 Helm release，验证普通 PVC，再使用保存的 values 重装 | 部分通过 | 卸载后 RootPV socket 消失，普通 PVC 正常；但 containerd 配置残留 RootPV handler。重装后 RootPV 动态 PVC 用例通过 |
 
 ## 发现并修复的问题

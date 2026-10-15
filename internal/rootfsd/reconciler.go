@@ -197,6 +197,11 @@ func retainRecoveredState(
 	processes ProcessChecker,
 	runtime RuntimeStateChecker,
 ) (bool, error) {
+	if state.FormatVersion == rootfsstate.FormatShimV1 {
+		// Kata/virtiofs may still hold a write layer even after a task exits.
+		// Only the shim Delete path releases it while either owner is alive.
+		return processes.Alive(state.Shim) || processes.Alive(state.Wrapper), nil
+	}
 	if state.FormatVersion == rootfsstate.FormatDelegationV1 && state.RootfsEnabled {
 		return runtime.Running(ctx, state)
 	}
@@ -238,7 +243,7 @@ func scanRuntimeStates(runtimeRoot string) ([]rootfsstate.State, error) {
 		if err != nil {
 			return nil, fmt.Errorf("load runtime state %s: %w", entry.Name(), err)
 		}
-		if state.FormatVersion == rootfsstate.FormatFlatV1 || recoverableDelegationState(state) {
+		if state.FormatVersion == rootfsstate.FormatShimV1 || state.FormatVersion == rootfsstate.FormatFlatV1 || recoverableDelegationState(state) {
 			states = append(states, state)
 		}
 	}
@@ -365,7 +370,7 @@ func (c NamespaceRecoveryCleaner) Cleanup(ctx context.Context, state rootfsstate
 			return fmt.Errorf("mount_still_present: %q", state.MergedDir)
 		}
 	}
-	if shouldDeleteRecoveredRuntime(state) {
+	if state.FormatVersion != rootfsstate.FormatShimV1 && shouldDeleteRecoveredRuntime(state) {
 		if state.DelegateBinary == "" {
 			return fmt.Errorf("delegate binary is unavailable for recovered cleanup")
 		}

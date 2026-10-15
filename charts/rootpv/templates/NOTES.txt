@@ -2,7 +2,7 @@ RootPV has been installed into namespace {{ .Release.Namespace }}.
 
 Next steps:
 1. Label target nodes:
-   kubectl label node <node-name> ecloud.com/persistent-rootfs=true --overwrite
+   kubectl label node <node-name> openfuyao.cn/persistent-rootfs=true --overwrite
 
 2. The chart configures RootPV runtime handlers on labeled nodes and uses the
    native containerd overlayfs snapshotter.
@@ -12,4 +12,19 @@ Next steps:
    kubectl -n {{ .Release.Namespace }} rollout status ds/{{ include "rootpv.nodeAgentName" . }} --timeout=180s
 
 4. Check RootPV-owned node capability labels:
-   kubectl get nodes --show-labels | grep ecloud.com/persistent-rootfs-ready
+   kubectl get nodes --show-labels | grep openfuyao.cn/persistent-rootfs-ready
+
+5. Runtime adapters use the original RuntimeClass:
+   - runc-v2 handlers use the OCI wrapper.
+   - Kata + QEMU handlers use the bundled task shim proxy and require an
+     already working Kata/QEMU installation with explicit runtime_path/ConfigPath.
+   kubectl -n {{ .Release.Namespace }} get configmap rootpv-runtime-adapters -o yaml
+   kubectl get runtimeclass -l openfuyao.cn/managed-by=rootpv
+
+6. For a Kata workload, submit runtimeClassName: kata-qemu and RootPV annotations.
+   See docs/user-guide/kata-qemu.md and tests/e2e/manifests/kata-qemu.yaml.
+   The example node/image must be adapted before applying the manifest.
+
+Uninstall the release only after RootPV workloads and leases have been cleaned.
+Generated host handlers, aliases, registry and Shadow RuntimeClasses currently
+require separate cleanup according to the installation backup.

@@ -1,82 +1,115 @@
 # RootPV 集群 E2E 测试
 
-本目录包含面向已部署 RootPV 集群的功能与性能测试。脚本通过 SSH 在控制面节点执行
-kubectl，因此开发机不需要保存 kubeconfig。
+本目录包含已部署 RootPV 集群的功能与性能脚本，以及 Kata + QEMU 的完整手工测试清单。
+脚本通过 SSH 在控制面执行 kubectl，开发机无需保存 kubeconfig。
+测试记录按运行时、存储和版本组合分别解释，不能由一个组合推导全部 runtime 支持。
 
-## 如何使用
+## 前提和配置
 
-### 1. 准备测试环境
+- Controller、node-agent 与具体 adapter 的就绪标签均可用。
+- 原 runtime 能独立运行普通 Pod；Kata 已安装 QEMU、可用的 guest kernel 和共享文件系统。
+- 测试节点能拉取镜像，或 containerd 已缓存同一测试镜像。
+- 自动化脚本使用可动态供给的 Filesystem + ReadWriteOnce 块 PVC；手工 Kata 清单另用静态 local PV。
+- 文件系统适合 OverlayFS upper/work；存储策略 ConfigMap 的类名配置不等于已实现的强制准入或后端验证。
 
-测试前请确认：
-
-- RootPV Controller 与节点代理已部署并就绪；
-- 至少一个工作节点已配置 RootPV runtime handler，并带有
-  ecloud.com/persistent-rootfs-ready=true 标签；
-- 目标节点可以拉取测试镜像，或已将测试镜像预加载到该节点的 containerd；
-- 集群已有可动态供给、支持 ReadWriteOnce 的块存储 StorageClass。
-
-复制示例配置，编辑本地配置中的连接信息、目标节点、镜像、StorageClass 和超时参数：
+普通 runc 配置：
 
 ```bash
 cp tests/e2e/configs/example.env tests/e2e/configs/.ebs-cluster.env
 ```
 
-.ebs-cluster.env 已被 Git 忽略。配置文件不得保存 SSH 密码、镜像仓库密码、访问令牌或
-kubeconfig。
+Kata + QEMU 配置：
 
-### 2. 执行功能测试
+```bash
+cp tests/e2e/configs/example-kata-qemu.env tests/e2e/configs/.kata-qemu.env
+```
+
+编辑连接信息、节点、镜像、StorageClass 和超时。点开头的本地 env 配置被 Git 忽略；
+不得写入 SSH 密码、令牌、镜像仓库密码或 kubeconfig。
+
+| 参数 | runc/default 示例 | Kata QEMU 示例 |
+| --- | --- | --- |
+| ORIGINAL_RUNTIME_CLASS | 空：使用节点默认 route | kata-qemu |
+| EXPECTED_RUNTIME_CLASS | persistent-rootfs-node-default | persistent-rootfs-kata-qemu |
+| EXPECTED_RUNTIME_ADAPTER | runc-v2 | kata-qemu-v2 |
+| STORAGE_CLASS | 可动态供给的块存储类 | 同样需要动态块存储类 |
+| TEST_IMAGE | 可执行 /bin/bash 的固定测试镜像 | 保持两轮镜像一致，符合 Strict |
+| RESULTS_DIR | tests/e2e/results | artifacts/e2e/kata-qemu，避免覆盖同日其他组合 |
+
+上表的 Kata ID 假设原 RuntimeClass 和 handler 均名为 kata-qemu；其他名称以生成 catalog 为准。
+
+## 自动化功能测试
 
 ```bash
 make e2e-functional E2E_CONFIG=tests/e2e/configs/.ebs-cluster.env
+make e2e-functional E2E_CONFIG=tests/e2e/configs/.kata-qemu.env
 ```
 
-功能测试覆盖以下场景：
+每次选择一个配置运行。脚本覆盖：
 
-- RootPV Controller、节点代理和节点就绪标签；
-- 未声明 RootPV 注解的 Pod 保持原始 RuntimeClass 与 Pod 定义；
-- 目标容器不存在的 RootPV 配置被 Webhook 拒绝；
-- 动态 PVC、RuntimeClass 与 runtime adapter 的准入注入；
-- 根目录写入跨 Pod 删除和重建后仍可保留；
-- 测试命名空间和 PVC 回收。
+- Controller、node-agent 和节点就绪；
+- 未 opt-in 的默认 runtime 对照；
+- 不存在的目标容器被准入拒绝；
+- 动态 PVC、RuntimeClass 与 adapter 注入；
+- 根目录标记在 Pod 删除重建后保留；
+- 测试 Namespace/PVC 清理。
 
-### 3. 执行性能测试
+脚本中的普通 Pod 对照未填写 RuntimeClass，因此它验证节点默认 runtime。
+Kata 的普通 Pod、多容器、互斥和 rootfsd 重启需要追加专项用例，不能从此脚本结果推导。
+
+脚本只允许 rootpv-e2e- 或 rootpv-test- 前缀的 Namespace。CLEANUP=false 可保留现场，
+默认会清理测试资源；不要对保留的写层启动并发写入 Pod。
+
+## Kata 完整 YAML 手工测试
+
+[manifests/kata-qemu.yaml](manifests/kata-qemu.yaml) 包含 Namespace、local PV、PVC、
+app 和 sidecar。把模板节点与镜像替换为实际值，在目标节点创建专用目录，并先部署
+包含 Kata proxy shim 的 RootPV。完整命令、预期输出和故障检查见
+[Kata 使用指南](../../docs/user-guide/kata-qemu.md#完整测试-yaml-与重建验证)。
+
+运行前确认 Kata handler 已 resolved；runtime_digest_unavailable 表示未能生成完整配置摘要，
+需按 [Kata 安装要求](../../docs/user-guide/kata-qemu.md#前提与安装)排查。配置错误、socket 凭据和创建回滚
+另由 `go test ./internal/node ./internal/katashim` 覆盖；socket 凭据用例仅在 Linux 上执行。
+
+新目录首次运行的 persistent-start-count 为 1；保留 PVC，仅删除 Pod 后重新应用，
+计数应变为 2，first-pod-uid 保持旧值，current-pod-uid 改变。sidecar 每轮使用新的普通根文件系统。
+清单仅声明 backing PVC volume，目标容器的只读 subPath anchor 由 Webhook 注入。
+
+local PV 为 Retain，删除 Namespace/PV 不会删除节点上的测试数据。
+这份可复用清单已检查 YAML 和容器脚本语法；历史集群验证对应的精确组合和用例见
+[2026-10-14 Kata 结果](results/kata-qemu-2026-10-14.md)。
+
+## 性能测试与比较范围
 
 ```bash
 make e2e-performance E2E_CONFIG=tests/e2e/configs/.ebs-cluster.env
 ```
 
-性能测试以同一镜像、节点、写入量和删除流程分别测量未启用与启用 RootPV 的路径；每条路径均先执行可配置的预热轮次，再进行正式测量：
+脚本测量创建到 Running、根文件系统同步写入、删除清理的时延与吞吐量，
+并先执行配置的预热，再执行正式测量。
 
-- Pod 创建到 Running 的端到端时延；
-- 指定大小根文件系统顺序写入的时延和吞吐量；
-- Pod 删除与 RootPV 运行时清理时延。
+当前性能脚本的未启用 RootPV 路径使用节点默认 runtime。设置 ORIGINAL_RUNTIME_CLASS=kata-qemu
+只会影响 opt-in 路径，不能把默认 runc 与 Kata 的差异称为 Kata 的 RootPV 开销。
+Kata 性能基线仍待专门验证：两条路径都须使用同一原 QEMU RuntimeClass、镜像、节点、
+写入量和删除流程，并分别记录 VM/runtime 与持久存储成本。
 
-测试脚本只允许操作名称以 rootpv-e2e- 或 rootpv-test- 开头的命名空间。设置
-CLEANUP=false 可保留现场进行故障分析；默认会清理测试资源。
+## 结果索引
 
-## 测试结果总结
+域名迁移后的检查见 [2026-10-14 本地冒烟](results/domain-migration-2026-10-14.md)。
+维护结束后已在 Kubernetes v1.37.1 完成 [新域名集群冒烟](results/domain-smoke-2026-10-14.md)，
+覆盖 runc 与 Kata 的启动、持久化重建、sidecar、普通 Kata、非法注解及清理。
+此前 Kata 记录对应迁移前的实现。
 
-2026-09-03 的验证在 Kubernetes v1.29 系列、6 节点 x86_64 Linux 集群中完成，目标工作节点
-使用 containerd 2.1，动态块存储 PVC 最小容量为 10Gi。
+| 组合 | 证据与范围 |
+| --- | --- |
+| Kubernetes v1.29 / containerd 2.1 / runc / 动态块 PVC | [功能](results/functional-2026-09-14.md)、[性能](results/performance-2026-09-14.md) |
+| 官方 containerd 多版本 / runc | [兼容性](results/compatibility-2026-09-14.md)；仅覆盖记录中的用例 |
+| Kubernetes v1.37.1 / 新域名 / runc + Kata QEMU / ext4 local PVC | [迁移后冒烟](results/domain-smoke-2026-10-14.md)：启动、重建、sidecar、准入与清理；不含完整兼容性矩阵 |
+| runc 恢复、互斥和升级 | [专项验证](results/special-validation-2026-09-15.md) |
+| Kubernetes v1.34.3 / containerd 2.1.1 / Kata 4.2.0 Rust / QEMU 11.0.1 / ext4 local PVC | [Kata 功能](results/kata-qemu-2026-10-14.md)：重建、sidecar、互斥、rootfsd 重启、普通 Kata 与清理 |
 
-| 功能测试用例 | 验证内容 | 结果 |
-| --- | --- | --- |
-| 组件与节点就绪 | Controller、节点代理及 RootPV 节点标签均处于就绪状态 | 通过 |
-| 非启用路径 | 未声明 RootPV 注解的 Pod 保持原始 Pod 定义和 RuntimeClass | 通过 |
-| 非法配置拒绝 | RootPV 指向不存在的目标容器时，Webhook 在服务端校验阶段拒绝请求 | 通过 |
-| 准入注入 | 动态 PVC 场景正确注入预期 RuntimeClass 与 runtime adapter | 通过 |
-| 持久根目录 | 首个 Pod 写入标记后删除并重建，后续 Pod 可读取该标记 | 通过 |
-| 资源回收 | 测试结束后命名空间与 PVC 能够清理 | 通过 |
+Kata 的动态 CSI、节点/VM 故障恢复、性能、设备和其他 runtime 实现仍待验证。
+发布覆盖和状态定义以 [兼容性方案](../../docs/design/04-compatibility-validation-plan.md) 为准。
 
-性能测试使用 1 轮预热、每个路径 3 轮正式测量和每轮 64MiB 同步写入。逐轮数据和详细结论见
-results 目录。未启用 RootPV 时写入容器可写层，启用
-RootPV 时写入持久根目录，因此“性能损耗占比”表示持久根目录带来的端到端差异，不等同于单独
-的 runtime wrapper 开销。性能结果受节点规格、块存储后端、镜像缓存和集群负载影响，应仅与
-相同环境的历史结果比较。
-
-| 指标 | 未启用 RootPV | 启用 RootPV | 性能损耗占比 |
-| --- | ---: | ---: | ---: |
-| Pod 创建至 Running（平均 / P95） | 5500 / 5700 ms | 14560 / 15553 ms | 平均 +164.73%；P95 +172.86% |
-| 根文件系统顺序写入（平均 / P95） | 1910 / 1972 ms | 1995 / 2066 ms | 平均 +4.45%；P95 +4.77% |
-| Pod 删除与运行时清理（平均 / P95） | 32336 / 32440 ms | 32247 / 32519 ms | 平均 -0.28%；P95 +0.24% |
-| 根文件系统顺序写入吞吐量 | 33.50 MiB/s | 32.08 MiB/s | 4.24% |
+2026-09-03 的历史性能样本为 1 轮预热、每路径 3 轮、每轮 64MiB 同步写入，
+详情见 [原始记录](results/performance-2026-09-03.md)。这些 runc 样本不能用于说明 Kata 性能。

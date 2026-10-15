@@ -119,7 +119,7 @@ func normalizeRegistryAdapter(id string, adapter ResolvedRuntimeAdapter, opts Re
 	if adapter.Mode != config.RuntimeAdapterModeExplicit && adapter.Mode != config.RuntimeAdapterModeNodeDefault {
 		return ResolvedRuntimeAdapter{}, fmt.Errorf("runtime adapter registry entry %q has unsupported mode %q", id, adapter.Mode)
 	}
-	if adapter.RuntimeType != config.RuncV2RuntimeType {
+	if !config.SupportedRuntimeType(adapter.RuntimeType) {
 		return ResolvedRuntimeAdapter{}, fmt.Errorf("runtime adapter registry entry %q has unsupported runtime type %q", id, adapter.RuntimeType)
 	}
 	delegate, err := validateDelegate(adapter.DelegateBinary, opts, isV2)

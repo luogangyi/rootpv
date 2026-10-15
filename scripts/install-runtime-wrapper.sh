@@ -12,6 +12,7 @@
 set -euo pipefail
 
 binary="${1:-dist/rootfs-runtime-wrapper-linux-amd64}"
+kata_shim="${ROOTPV_KATA_SHIM_BINARY:-$(dirname "${binary}")/containerd-shim-rootpv-kata-v2-linux-amd64}"
 target_dir="${TARGET_DIR:-/usr/local/bin}"
 config_dir="${CONFIG_DIR:-/etc/rootpv}"
 rootfsd_socket="${ROOTPV_ROOTFSD_SOCKET:-/run/persistent-rootfsd/rootfsd.sock}"
@@ -30,6 +31,9 @@ fi
 
 install -d -m 0755 "${target_dir}" "${config_dir}"
 install -m 0755 "${binary}" "${target_dir}/rootfs-runtime-wrapper"
+if [[ -f "${kata_shim}" ]]; then
+  install -m 0755 "${kata_shim}" "${target_dir}/containerd-shim-rootpv-kata-v2"
+fi
 ln -sfn rootfs-runtime-wrapper "${target_dir}/rootfs-runtime-wrapper-runc"
 ln -sfn rootfs-runtime-wrapper "${target_dir}/rootfs-runtime-wrapper-nvidia"
 

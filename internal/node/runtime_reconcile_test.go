@@ -116,7 +116,7 @@ func assertVendorRuntimeClone(t *testing.T, fixture vendorRuntimeReconcileFixtur
 	if target, err := os.Readlink(filepath.Join(fixture.root, generatedWrapper)); err != nil || target != "rootfs-runtime-wrapper" {
 		t.Fatalf("generated wrapper alias: target=%q err=%v", target, err)
 	}
-	if !strings.Contains(strings.Join(stringSlice(shadow["pod_annotations"]), ","), "ecloud.com/*") || !strings.Contains(strings.Join(stringSlice(shadow["container_annotations"]), ","), "ecloud.com/*") {
+	if !strings.Contains(strings.Join(stringSlice(shadow["pod_annotations"]), ","), "openfuyao.cn/*") || !strings.Contains(strings.Join(stringSlice(shadow["container_annotations"]), ","), "openfuyao.cn/*") {
 		t.Fatalf("RootPV annotations are not propagated to OCI: %#v", shadow)
 	}
 }

@@ -22,7 +22,7 @@ spec:
       serviceAccountName: persistent-rootfs-node
       hostPID: true
       nodeSelector:
-        ecloud.com/persistent-rootfs: "true"
+        openfuyao.cn/persistent-rootfs: "true"
       tolerations:
       - operator: Exists
       initContainers:

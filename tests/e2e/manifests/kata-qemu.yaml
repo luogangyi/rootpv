@@ -1,0 +1,132 @@
+# Preconditions:
+# 1. Deploy RootPV with the Kata proxy shim and wait for persistent-rootfs-kata-qemu.
+# 2. Replace rootpv-worker-1 with your Kata node and create the local PV directory.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rootpv-test-kata-qemu
+  labels:
+    openfuyao.cn/rootpv-kata-test: "true"
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rootpv-test-kata-qemu-pv
+spec:
+  capacity:
+    storage: 1Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: rootpv-local
+  claimRef:
+    namespace: rootpv-test-kata-qemu
+    name: rootfs-data
+  local:
+    path: /var/lib/rootpv/kata-test-data
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - rootpv-worker-1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rootfs-data
+  namespace: rootpv-test-kata-qemu
+spec:
+  volumeName: rootpv-test-kata-qemu-pv
+  storageClassName: rootpv-local
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kata-rootpv-test
+  namespace: rootpv-test-kata-qemu
+  annotations:
+    openfuyao.cn/persistent-rootfs: "true"
+    openfuyao.cn/rootfs-container: app
+    openfuyao.cn/rootfs-volume: rootfs-data
+    openfuyao.cn/rootfs-path: kata-test/app
+    openfuyao.cn/rootfs-base-image-policy: Strict
+spec:
+  runtimeClassName: kata-qemu
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 5
+  nodeSelector:
+    kubernetes.io/hostname: rootpv-worker-1
+  containers:
+    - name: app
+      image: nginx:1.21.4
+      imagePullPolicy: IfNotPresent
+      env:
+        - name: POD_UID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.uid
+      command:
+        - /bin/sh
+        - -ec
+        - |
+          marker=/rootpv-kata.marker
+          counter=/rootpv-kata.boot-count
+          if [ ! -f "$marker" ]; then
+            printf 'first-pod-uid=%s\n' "$POD_UID" > "$marker"
+          fi
+          count=0
+          if [ -f "$counter" ]; then
+            count="$(cat "$counter")"
+          fi
+          count=$((count + 1))
+          printf '%s\n' "$count" > "$counter.tmp"
+          mv "$counter.tmp" "$counter"
+          sync
+          echo "guest-kernel=$(uname -r)"
+          echo "current-pod-uid=$POD_UID"
+          cat "$marker"
+          echo "persistent-start-count=$count"
+          exec sleep 86400
+      readinessProbe:
+        exec:
+          command:
+            - /bin/sh
+            - -ec
+            - test -s /rootpv-kata.marker && test -s /rootpv-kata.boot-count
+        initialDelaySeconds: 1
+        periodSeconds: 2
+    - name: sidecar
+      image: nginx:1.21.4
+      imagePullPolicy: IfNotPresent
+      command:
+        - /bin/sh
+        - -ec
+        - |
+          test ! -e /rootpv-kata.marker
+          test ! -e /rootpv-sidecar.marker
+          printf 'sidecar-ephemeral\n' > /rootpv-sidecar.marker
+          echo "sidecar guest-kernel=$(uname -r)"
+          echo "sidecar starts with a fresh root filesystem"
+          exec sleep 86400
+      readinessProbe:
+        exec:
+          command:
+            - /bin/sh
+            - -ec
+            - test -s /rootpv-sidecar.marker && test ! -e /rootpv-kata.marker
+        initialDelaySeconds: 1
+        periodSeconds: 2
+  # RootPV injects a read-only subPath anchor for app before kubelet starts it.
+  volumes:
+    - name: rootfs-data
+      persistentVolumeClaim:
+        claimName: rootfs-data

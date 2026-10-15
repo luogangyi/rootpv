@@ -113,8 +113,8 @@ blocks = [f'''
 [{plugin}.containerd.runtimes.persistent-rootfs-nvidia]
   runtime_type = "io.containerd.runc.v2"
   snapshotter = "overlayfs"
-  pod_annotations = ["ecloud.com/*"]
-  container_annotations = ["ecloud.com/*"]
+  pod_annotations = ["openfuyao.cn/*"]
+  container_annotations = ["openfuyao.cn/*"]
 
   [{plugin}.containerd.runtimes.persistent-rootfs-nvidia.options]
     BinaryName = "{nvidia_wrapper}"
@@ -123,8 +123,8 @@ blocks = [f'''
 [{plugin}.containerd.runtimes.persistent-rootfs-runc]
   runtime_type = "io.containerd.runc.v2"
   snapshotter = "overlayfs"
-  pod_annotations = ["ecloud.com/*"]
-  container_annotations = ["ecloud.com/*"]
+  pod_annotations = ["openfuyao.cn/*"]
+  container_annotations = ["openfuyao.cn/*"]
 
   [{plugin}.containerd.runtimes.persistent-rootfs-runc.options]
     BinaryName = "{runc_wrapper}"
