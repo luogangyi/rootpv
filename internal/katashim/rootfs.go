@@ -23,6 +23,7 @@ import (
 	task "github.com/containerd/containerd/api/runtime/task/v2"
 	types "github.com/containerd/containerd/api/types"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
+	"google.golang.org/protobuf/proto"
 
 	api "gitcode.com/openFuyao/rootpv/internal/apis/rootfs/v1alpha1"
 	"gitcode.com/openFuyao/rootpv/internal/config"
@@ -85,6 +86,29 @@ func (l *RootfsLifecycle) Create(ctx context.Context, delegate task.TaskService,
 	if !runtimewrapper.ShouldMountPersistentRootfs(spec) {
 		return delegate.Create(ctx, req)
 	}
+	create, err := l.prepareCreate(ctx, spec, req)
+	if err != nil {
+		return nil, err
+	}
+	created, err := create.run(ctx, delegate, req)
+	if err != nil {
+		return nil, create.rollback(ctx, delegate, err)
+	}
+	return created, nil
+}
+
+// rootfsCreate tracks which resources must be rolled back if a create fails.
+type rootfsCreate struct {
+	lifecycle *RootfsLifecycle
+	state     rootfsstate.State
+	source    runtimewrapper.SourceOverlay
+	resolve   api.ResolveRootfsRequest
+	response  api.ResolveRootfsResponse
+	mounted   bool
+	called    bool
+}
+
+func (l *RootfsLifecycle) prepareCreate(ctx context.Context, spec *specs.Spec, req *task.CreateTaskRequest) (*rootfsCreate, error) {
 	if req.Checkpoint != "" || l.Config.OverlayMode != runtimewrapper.OverlayModeFlatLowerdirs {
 		return nil, fmt.Errorf("Kata RootPV requires flat-lowerdirs and a fresh create")
 	}
@@ -119,92 +143,112 @@ func (l *RootfsLifecycle) Create(ctx context.Context, delegate task.TaskService,
 		RuntimeAdapterID: l.AdapterID, RuntimeAdapterMode: string(l.Adapter.Mode), SourceHandler: l.Adapter.SourceHandler, RootfsHandler: l.Adapter.RootfsHandler, RuntimeType: l.Adapter.RuntimeType, DelegateBinary: l.Adapter.DelegateBinary,
 		ClusterAdapterDigest: l.Adapter.ClusterAdapterDigest, NodeResolvedDigest: l.Adapter.NodeResolvedDigest, RootfsEnabled: true,
 	}
-	mounted, called := false, false
-	rollback := func(cause error) (*task.CreateTaskResponse, error) {
-		// An RPC error may follow a successful Create in Kata. Require a successful
-		// Delete (or NotFound) before unmounting/releasing the persistent write layer.
-		if called {
-			if _, err := delegate.Delete(context.WithoutCancel(ctx), &task.DeleteRequest{ID: req.ID}); err != nil && !isNotFound(err) {
-				return nil, errors.Join(cause, fmt.Errorf("Kata create rollback delete: %w", err))
-			}
-		}
-		if mounted {
-			if err := l.Unmounter.UnmountNormal(state.MergedDir); err != nil {
-				return nil, errors.Join(cause, err)
-			}
-			if err := l.Verifier.ConfirmUnmounted(state.MergedDir); err != nil {
-				return nil, errors.Join(cause, err)
-			}
-		}
-		released, err := l.Rootfs.ReleaseRootfs(context.WithoutCancel(ctx), api.ReleaseRootfsRequest{LeaseID: state.LeaseID, ContainerID: state.ContainerID})
-		if err != nil || !released.Released {
-			return nil, errors.Join(cause, fmt.Errorf("Kata rollback lease release: %v", err))
-		}
-		return nil, errors.Join(cause, os.RemoveAll(filepath.Join(l.Config.RuntimeRoot, state.ContainerID)))
-	}
+	return &rootfsCreate{lifecycle: l, state: state, source: source, resolve: resolve, response: response}, nil
+}
+
+func (c *rootfsCreate) save() error {
+	return rootfsstate.Save(c.lifecycle.Config.RuntimeRoot, c.state.ContainerID, c.state)
+}
+
+func (c *rootfsCreate) mount() error {
+	l, state := c.lifecycle, &c.state
+	var err error
 	state.Wrapper, err = l.Identity(os.Getpid())
 	if err != nil {
-		return rollback(err)
+		return err
 	}
 	state.Shim, err = l.Identity(l.DelegatePID)
 	if err != nil {
-		return rollback(err)
+		return err
 	}
 	state.MountNamespace, err = l.MountNamespace()
 	if err != nil {
-		return rollback(err)
+		return err
 	}
-	save := func() error { return rootfsstate.Save(l.Config.RuntimeRoot, state.ContainerID, state) }
-	if err := save(); err != nil {
-		return rollback(err)
+	if err := c.save(); err != nil {
+		return err
 	}
-	if err := l.Mounter.Probe(response.UpperDir); err != nil {
-		return rollback(err)
+	if err := l.Mounter.Probe(c.response.UpperDir); err != nil {
+		return err
 	}
-	mounted = true
-	if err := l.Mounter.MountFlat(runtimewrapper.FlatOverlayMountRequest{LowerDirs: source.LowerDirs, UpperDir: response.UpperDir, WorkDir: response.WorkDir, MergedDir: state.MergedDir, ResolverOptions: response.MountOptions, MountLabel: resolve.MountLabel}); err != nil {
-		return rollback(err)
+	c.mounted = true
+	if err := l.Mounter.MountFlat(runtimewrapper.FlatOverlayMountRequest{LowerDirs: c.source.LowerDirs, UpperDir: c.response.UpperDir, WorkDir: c.response.WorkDir, MergedDir: state.MergedDir, ResolverOptions: c.response.MountOptions, MountLabel: c.resolve.MountLabel}); err != nil {
+		return err
 	}
 	state.Phase = rootfsstate.PhaseMounted
-	if err := save(); err != nil {
-		return rollback(err)
-	}
-	ack, err := l.Rootfs.MarkMounted(ctx, api.MarkMountedRequest{LeaseID: state.LeaseID, RuntimeStatePath: rootfsstate.Path(l.Config.RuntimeRoot, req.ID)})
+	return c.save()
+}
+
+func (c *rootfsCreate) register(ctx context.Context) error {
+	l, state := c.lifecycle, &c.state
+	ack, err := l.Rootfs.MarkMounted(ctx, api.MarkMountedRequest{LeaseID: state.LeaseID, RuntimeStatePath: rootfsstate.Path(l.Config.RuntimeRoot, state.ContainerID)})
 	if err != nil || !ack.Mounted {
-		return rollback(fmt.Errorf("mark Kata rootfs mounted: %v", err))
+		return fmt.Errorf("mark Kata rootfs mounted: %v", err)
 	}
-	begin, err := l.Rootfs.BeginCreate(ctx, api.BeginCreateRequest{LeaseID: state.LeaseID, ContainerID: req.ID, WrapperPID: state.Wrapper.PID, WrapperStartTime: state.Wrapper.StartTime})
+	begin, err := l.Rootfs.BeginCreate(ctx, api.BeginCreateRequest{LeaseID: state.LeaseID, ContainerID: state.ContainerID, WrapperPID: state.Wrapper.PID, WrapperStartTime: state.Wrapper.StartTime})
 	if err != nil || begin.AttemptToken == "" {
-		return rollback(fmt.Errorf("begin Kata create: %v", err))
+		return fmt.Errorf("begin Kata create: %v", err)
 	}
 	state.Phase, state.AttemptStatus, state.AttemptToken = rootfsstate.PhaseCreatingPending, rootfsstate.AttemptPending, begin.AttemptToken
-	if err := save(); err != nil {
-		return rollback(err)
+	if err := c.save(); err != nil {
+		return err
 	}
 	registered, err := l.Rootfs.RegisterDelegate(ctx, api.RegisterDelegateRequest{LeaseID: state.LeaseID, AttemptToken: state.AttemptToken, DelegatePID: state.Shim.PID, DelegateStartTime: state.Shim.StartTime})
 	if err != nil || !registered.Registered {
-		return rollback(fmt.Errorf("register Kata shim: %v", err))
+		return fmt.Errorf("register Kata shim: %v", err)
 	}
 	state.Phase, state.AttemptStatus, state.Delegate = rootfsstate.PhaseCreatingRegistered, rootfsstate.AttemptRegistered, state.Shim
-	if err := save(); err != nil {
-		return rollback(err)
+	return c.save()
+}
+
+func (c *rootfsCreate) run(ctx context.Context, delegate task.TaskService, req *task.CreateTaskRequest) (*task.CreateTaskResponse, error) {
+	if err := c.mount(); err != nil {
+		return nil, err
 	}
-	forwarded := *req
-	forwarded.Rootfs = []*types.Mount{{Type: "bind", Source: state.MergedDir, Options: []string{"rbind", "rw"}}}
-	called = true
-	created, err := delegate.Create(ctx, &forwarded)
+	if err := c.register(ctx); err != nil {
+		return nil, err
+	}
+	forwarded := &task.CreateTaskRequest{}
+	proto.Merge(forwarded, req)
+	forwarded.Rootfs = []*types.Mount{{Type: "bind", Source: c.state.MergedDir, Options: []string{"rbind", "rw"}}}
+	c.called = true
+	created, err := delegate.Create(ctx, forwarded)
 	if err != nil {
-		return rollback(err)
+		return nil, err
 	}
-	committed, err := l.Rootfs.CommitCreate(ctx, api.CommitCreateRequest{LeaseID: state.LeaseID, AttemptToken: state.AttemptToken})
+	committed, err := c.lifecycle.Rootfs.CommitCreate(ctx, api.CommitCreateRequest{LeaseID: c.state.LeaseID, AttemptToken: c.state.AttemptToken})
 	if err != nil || !committed.Created {
-		return rollback(fmt.Errorf("commit Kata create: %v", err))
+		return nil, fmt.Errorf("commit Kata create: %v", err)
 	}
-	state.Phase = rootfsstate.PhaseCreated
-	if err := save(); err != nil {
-		return rollback(err)
+	c.state.Phase = rootfsstate.PhaseCreated
+	if err := c.save(); err != nil {
+		return nil, err
 	}
 	return created, nil
+}
+
+func (c *rootfsCreate) rollback(ctx context.Context, delegate task.TaskService, cause error) error {
+	l, state := c.lifecycle, c.state
+	// An RPC error may follow a successful Create in Kata. Require a successful
+	// Delete (or NotFound) before unmounting/releasing the persistent write layer.
+	if c.called {
+		if _, err := delegate.Delete(context.WithoutCancel(ctx), &task.DeleteRequest{ID: state.ContainerID}); err != nil && !isNotFound(err) {
+			return errors.Join(cause, fmt.Errorf("Kata create rollback delete: %w", err))
+		}
+	}
+	if c.mounted {
+		if err := l.Unmounter.UnmountNormal(state.MergedDir); err != nil {
+			return errors.Join(cause, err)
+		}
+		if err := l.Verifier.ConfirmUnmounted(state.MergedDir); err != nil {
+			return errors.Join(cause, err)
+		}
+	}
+	released, err := l.Rootfs.ReleaseRootfs(context.WithoutCancel(ctx), api.ReleaseRootfsRequest{LeaseID: state.LeaseID, ContainerID: state.ContainerID})
+	if err != nil || !released.Released {
+		return errors.Join(cause, fmt.Errorf("Kata rollback lease release: %v", err))
+	}
+	return errors.Join(cause, os.RemoveAll(filepath.Join(l.Config.RuntimeRoot, state.ContainerID)))
 }
 
 func (l *RootfsLifecycle) Delete(ctx context.Context, delegate task.TaskService, req *task.DeleteRequest) (*task.DeleteResponse, error) {

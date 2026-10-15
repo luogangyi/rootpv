@@ -67,6 +67,10 @@ app 和 sidecar。把模板节点与镜像替换为实际值，在目标节点�
 包含 Kata proxy shim 的 RootPV。完整命令、预期输出和故障检查见
 [Kata 使用指南](../../docs/user-guide/kata-qemu.md#完整测试-yaml-与重建验证)。
 
+运行前确认 Kata handler 已 resolved；runtime_digest_unavailable 表示未能生成完整配置摘要，
+需按 [Kata 安装要求](../../docs/user-guide/kata-qemu.md#前提与安装)排查。配置错误、socket 凭据和创建回滚
+另由 `go test ./internal/node ./internal/katashim` 覆盖；socket 凭据用例仅在 Linux 上执行。
+
 新目录首次运行的 persistent-start-count 为 1；保留 PVC，仅删除 Pod 后重新应用，
 计数应变为 2，first-pod-uid 保持旧值，current-pod-uid 改变。sidecar 每轮使用新的普通根文件系统。
 清单仅声明 backing PVC volume，目标容器的只读 subPath anchor 由 Webhook 注入。

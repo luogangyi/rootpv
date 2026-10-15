@@ -19,6 +19,10 @@ Pod 映射到 `persistent-rootfs-kata-qemu`。普通 Kata Pod 使用原生 handl
 并在本地受信任 registry 中记录原 Kata shim 路径及配置摘要。Shadow handler 保留 `ConfigPath`、
 Kata annotations、设备选项、RuntimeClass overhead 和 scheduling；仅替换 `runtime_path` 并增加 RootPV annotation 白名单。
 
+摘要必须包含完整的源 handler 配置与 Kata 配置内容。发现阶段编码 options 或读取配置失败时，
+handler 保持 unresolved，原因是 `runtime_digest_unavailable`；reconcile 阶段发生同类错误时，
+返回错误并停止此次配置及 registry 写入。检查 ConfigPath、文件权限及 node-agent 日志后重试。
+
 如果 kubelet 与 containerd 使用非默认数据目录，应同时设置路径和宿主机挂载：
 
 ```yaml

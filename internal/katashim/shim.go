@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -112,14 +113,9 @@ func (s *Service) StartShim(ctx context.Context, opts shim.StartOpts) (_ string,
 	if err != nil {
 		return "", err
 	}
-	registry, err := runtimewrapper.LoadAdapterRegistry(s.cfg.RuntimeAdapterRegistry, runtimewrapper.RegistryOptions{WrapperBinary: os.Args[0]})
+	id, adapter, err := s.resolveAdapter()
 	if err != nil {
 		return "", err
-	}
-	id := strings.TrimPrefix(filepath.Base(os.Args[0]), "containerd-shim-rootpv-")
-	adapter, ok := registry.Adapters[id]
-	if !ok || !config.IsKataQemuRuntimeType(adapter.RuntimeType) {
-		return "", fmt.Errorf("kata runtime adapter not found for %s", os.Args[0])
 	}
 	group := opts.ID
 	if sandbox := spec.Annotations["io.kubernetes.cri.sandbox-id"]; sandbox != "" {
@@ -140,7 +136,7 @@ func (s *Service) StartShim(ctx context.Context, opts shim.StartOpts) (_ string,
 	defer socket.Close()
 	defer func() {
 		if retErr != nil {
-			_ = shim.RemoveSocket(address)
+			retErr = errors.Join(retErr, shim.RemoveSocket(address))
 		}
 	}()
 	// Preserve Kata's original options protobuf on stdin and all vendor options
@@ -149,9 +145,54 @@ func (s *Service) StartShim(ctx context.Context, opts shim.StartOpts) (_ string,
 	if err != nil {
 		return "", err
 	}
-	ns, err := namespaces.NamespaceRequired(ctx)
+	args, err := startArgs(ctx, opts)
 	if err != nil {
 		return "", err
+	}
+	var delegateIdentity rootfsstate.ProcessIdentity
+	s.pinned, delegateIdentity, err = startDelegate(ctx, id, adapter, args, input)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if retErr != nil {
+			retErr = cleanupFailedStart(ctx, s.pinned, delegateIdentity, retErr)
+		}
+	}()
+	if err := writeBootstrap(s.pinned); err != nil {
+		return "", err
+	}
+	if err := startProxy(ctx, socket, address, opts.ID, args); err != nil {
+		return "", err
+	}
+	return address, nil
+}
+
+func writeBootstrap(pinned bootstrap) error {
+	data, err := json.Marshal(pinned)
+	if err != nil {
+		return err
+	}
+	return atomicfile.Write(bootstrapFile+".tmp", bootstrapFile, data, 0o600)
+}
+
+func (s *Service) resolveAdapter() (string, runtimewrapper.ResolvedRuntimeAdapter, error) {
+	registry, err := runtimewrapper.LoadAdapterRegistry(s.cfg.RuntimeAdapterRegistry, runtimewrapper.RegistryOptions{WrapperBinary: os.Args[0]})
+	if err != nil {
+		return "", runtimewrapper.ResolvedRuntimeAdapter{}, err
+	}
+	id := strings.TrimPrefix(filepath.Base(os.Args[0]), "containerd-shim-rootpv-")
+	adapter, ok := registry.Adapters[id]
+	if !ok || !config.IsKataQemuRuntimeType(adapter.RuntimeType) {
+		return "", runtimewrapper.ResolvedRuntimeAdapter{}, fmt.Errorf("kata runtime adapter not found for %s", os.Args[0])
+	}
+	return id, adapter, nil
+}
+
+func startArgs(ctx context.Context, opts shim.StartOpts) ([]string, error) {
+	ns, err := namespaces.NamespaceRequired(ctx)
+	if err != nil {
+		return nil, err
 	}
 	publishBinary := opts.ContainerdBinary
 	if publishBinary == "" {
@@ -164,55 +205,55 @@ func (s *Service) StartShim(ctx context.Context, opts shim.StartOpts) (_ string,
 	if publishBinary == "" {
 		publishBinary, err = exec.LookPath("containerd")
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 	}
 	args := []string{"-namespace", ns, "-id", opts.ID, "-address", opts.Address, "-publish-binary", publishBinary}
 	if opts.Debug {
 		args = append(args, "-debug")
 	}
+	return args, nil
+}
+
+func startDelegate(ctx context.Context, id string, adapter runtimewrapper.ResolvedRuntimeAdapter, args []string, input []byte) (bootstrap, rootfsstate.ProcessIdentity, error) {
 	cmd := exec.CommandContext(ctx, adapter.DelegateBinary, append(args, "start")...)
 	cmd.Stdin, cmd.Stderr = bytes.NewReader(input), os.Stderr
 	output, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("start Kata delegate: %w", err)
+		return bootstrap{}, rootfsstate.ProcessIdentity{}, fmt.Errorf("start Kata delegate: %w", err)
 	}
 	delegateAddress, err := parseAddress(output)
 	if err != nil {
-		return "", err
+		return bootstrap{}, rootfsstate.ProcessIdentity{}, err
 	}
 	delegateIdentity, err := startedDelegateIdentity(adapter.DelegateBinary)
 	if err != nil {
-		return "", err
+		return bootstrap{}, rootfsstate.ProcessIdentity{}, err
 	}
-	defer func() {
-		if retErr != nil {
-			cleanup := exec.CommandContext(context.WithoutCancel(ctx), adapter.DelegateBinary, append(args, "delete")...)
-			if output, err := cleanup.CombinedOutput(); err != nil {
-				retErr = errors.Join(retErr, fmt.Errorf("cleanup failed Kata start: %w: %s", err, output))
-			}
-			// No task Create can reach Kata before StartShim returns. If the vendor
-			// cleanup leaves its idle shim alive, stop only the pinned PID/starttime.
-			if current, err := runtimewrapper.ProcessIdentityFor(delegateIdentity.PID); err == nil && current == delegateIdentity {
-				retErr = errors.Join(retErr, syscall.Kill(delegateIdentity.PID, syscall.SIGKILL))
-			}
-		}
-	}()
-	s.pinned = bootstrap{AdapterID: id, Adapter: adapter, Address: delegateAddress, Args: args}
-	data, err := json.Marshal(s.pinned)
-	if err != nil {
-		return "", err
+	return bootstrap{AdapterID: id, Adapter: adapter, Address: delegateAddress, Args: args}, delegateIdentity, nil
+}
+
+func cleanupFailedStart(ctx context.Context, pinned bootstrap, identity rootfsstate.ProcessIdentity, cause error) error {
+	cleanup := exec.CommandContext(context.WithoutCancel(ctx), pinned.Adapter.DelegateBinary, append(pinned.Args, "delete")...)
+	if output, err := cleanup.CombinedOutput(); err != nil {
+		cause = errors.Join(cause, fmt.Errorf("cleanup failed Kata start: %w: %s", err, output))
 	}
-	if err := atomicfile.Write(bootstrapFile+".tmp", bootstrapFile, data, 0o600); err != nil {
-		return "", err
+	// No task Create can reach Kata before StartShim returns. If the vendor
+	// cleanup leaves its idle shim alive, stop only the pinned PID/starttime.
+	if current, err := runtimewrapper.ProcessIdentityFor(identity.PID); err == nil && current == identity {
+		cause = errors.Join(cause, syscall.Kill(identity.PID, syscall.SIGKILL))
 	}
+	return cause
+}
+
+func startProxy(ctx context.Context, socket *net.UnixListener, address, id string, args []string) error {
 	self, err := os.Executable()
 	if err != nil {
-		return "", err
+		return err
 	}
 	file, err := socket.File()
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer file.Close()
 	child := exec.Command(self, args...)
@@ -221,20 +262,25 @@ func (s *Service) StartShim(ctx context.Context, opts shim.StartOpts) (_ string,
 	child.ExtraFiles = []*os.File{file}
 	child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := child.Start(); err != nil {
-		return "", err
+		return err
 	}
 	go child.Wait()
 	readyCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if err := waitProxy(readyCtx, address, opts.ID); err != nil {
-		_ = child.Process.Kill()
-		return "", err
+	if err := waitProxy(readyCtx, address, id); err != nil {
+		return stopFailedProxy(child.Process, err)
 	}
 	if err := shim.WriteAddress("address", address); err != nil {
-		_ = child.Process.Kill()
-		return "", err
+		return stopFailedProxy(child.Process, err)
 	}
-	return address, nil
+	return nil
+}
+
+func stopFailedProxy(process *os.Process, cause error) error {
+	if err := process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return errors.Join(cause, fmt.Errorf("stop failed RootPV proxy: %w", err))
+	}
+	return cause
 }
 
 func parseAddress(data []byte) (string, error) {

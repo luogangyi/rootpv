@@ -21,13 +21,14 @@ import (
 	"strings"
 	"testing"
 
+	task "github.com/containerd/containerd/api/runtime/task/v2"
+	specs "github.com/opencontainers/runtime-spec/specs-go"
+
 	api "gitcode.com/openFuyao/rootpv/internal/apis/rootfs/v1alpha1"
 	"gitcode.com/openFuyao/rootpv/internal/config"
 	"gitcode.com/openFuyao/rootpv/internal/rootfs"
 	"gitcode.com/openFuyao/rootpv/internal/rootfsstate"
 	"gitcode.com/openFuyao/rootpv/internal/runtimewrapper"
-	task "github.com/containerd/containerd/api/runtime/task/v2"
-	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
 
 type fixture struct {
@@ -67,12 +68,21 @@ func (r fakeRootfs) ResolveRootfs(context.Context, api.ResolveRootfsRequest) (ap
 	return api.ResolveRootfsResponse{Enabled: true, LeaseID: "lease", UpperDir: root + "/upper", WorkDir: root + "/work", MetaDir: root + "/meta"}, nil
 }
 func (r fakeRootfs) MarkMounted(context.Context, api.MarkMountedRequest) (api.MarkMountedResponse, error) {
+	if r.f.fail == "mark-mounted" {
+		return api.MarkMountedResponse{}, errors.New("mark mounted failed")
+	}
 	return api.MarkMountedResponse{Mounted: true}, nil
 }
 func (r fakeRootfs) BeginCreate(context.Context, api.BeginCreateRequest) (api.BeginCreateResponse, error) {
+	if r.f.fail == "begin" {
+		return api.BeginCreateResponse{}, errors.New("begin failed")
+	}
 	return api.BeginCreateResponse{AttemptToken: "attempt"}, nil
 }
 func (r fakeRootfs) RegisterDelegate(context.Context, api.RegisterDelegateRequest) (api.RegisterDelegateResponse, error) {
+	if r.f.fail == "register" {
+		return api.RegisterDelegateResponse{}, errors.New("register failed")
+	}
 	r.f.steps = append(r.f.steps, "register")
 	return api.RegisterDelegateResponse{Registered: true}, nil
 }
@@ -90,7 +100,12 @@ func (r fakeRootfs) ReleaseRootfs(context.Context, api.ReleaseRootfsRequest) (ap
 
 type fakeMount struct{ f *fixture }
 
-func (m fakeMount) Probe(string) error { return nil }
+func (m fakeMount) Probe(string) error {
+	if m.f.fail == "probe" {
+		return errors.New("probe failed")
+	}
+	return nil
+}
 func (m fakeMount) MountFlat(runtimewrapper.FlatOverlayMountRequest) error {
 	m.f.steps = append(m.f.steps, "mount")
 	if m.f.fail == "mount" {
@@ -131,16 +146,18 @@ func newFixture(t *testing.T) *fixture {
 	cfg.OverlayMode = runtimewrapper.OverlayModeFlatLowerdirs
 	cfg.AllowedOverlaySnapshotRoots = []string{root + "/snapshot"}
 	f := &fixture{request: &task.CreateTaskRequest{ID: "container", Bundle: root + "/bundle"}}
-	f.lifecycle = NewRootfsLifecycle(cfg, "kata-qemu-v2", adapter, 7)
-	f.lifecycle.Identity = func(pid int) (rootfsstate.ProcessIdentity, error) {
-		return rootfsstate.ProcessIdentity{PID: pid, StartTime: 99}, nil
+	f.lifecycle = &RootfsLifecycle{
+		Config: cfg, AdapterID: "kata-qemu-v2", Adapter: adapter, DelegatePID: 7,
+		Identity: func(pid int) (rootfsstate.ProcessIdentity, error) {
+			return rootfsstate.ProcessIdentity{PID: pid, StartTime: 99}, nil
+		},
+		MountNamespace: func() (uint64, error) { return 1, nil },
+		Rootfs:         fakeRootfs{f},
+		Mounter:        fakeMount{f},
+		Unmounter:      fakeMount{f},
+		Verifier:       fakeMount{f},
+		Snapshot:       fakeSnapshot{runtimewrapper.SourceOverlay{Snapshotter: "overlayfs", SnapshotKey: "snapshot", RootfsChainID: "chain", LowerDirs: dirs[:1], UpperDir: dirs[1], WorkDir: dirs[2]}},
 	}
-	f.lifecycle.MountNamespace = func() (uint64, error) { return 1, nil }
-	f.lifecycle.Rootfs = fakeRootfs{f}
-	f.lifecycle.Mounter = fakeMount{f}
-	f.lifecycle.Unmounter = fakeMount{f}
-	f.lifecycle.Verifier = fakeMount{f}
-	f.lifecycle.Snapshot = fakeSnapshot{runtimewrapper.SourceOverlay{Snapshotter: "overlayfs", SnapshotKey: "snapshot", RootfsChainID: "chain", LowerDirs: dirs[:1], UpperDir: dirs[1], WorkDir: dirs[2]}}
 	f.delegate = &fakeTask{f: f}
 	spec := &specs.Spec{Root: &specs.Root{Path: "rootfs"}, Annotations: map[string]string{rootfs.AnnotationEnabled: "true", rootfs.AnnotationRuntimeAdapterID: "kata-qemu-v2", rootfs.AnnotationRuntimeAdapterMode: "Explicit", rootfs.AnnotationRuntimeAdapterConfigHash: "cluster"}}
 	if err := runtimewrapper.SaveSpec(f.request.Bundle, spec); err != nil {
@@ -180,7 +197,7 @@ func TestPersistentCreateAndDeleteOrder(t *testing.T) {
 }
 
 func TestCreateRollbackRetainsLeaseUntilDelegateAndMountAreClean(t *testing.T) {
-	for _, failure := range []string{"mount", "create", "commit", "rollback-delete"} {
+	for _, failure := range []string{"probe", "mount", "mark-mounted", "begin", "register", "create", "commit", "rollback-delete"} {
 		t.Run(failure, func(t *testing.T) {
 			f := newFixture(t)
 			f.fail = failure

@@ -259,6 +259,8 @@ node-agent 定期读取 containerd 主配置、显式 imports/glob imports 和 C
 4. Kata runtime_path/ConfigPath 缺失或类型不支持时，报告 unresolved/unsupported，不生成就绪 adapter。
 5. 对 delegate 做 realpath、普通文件、可执行权限和 RootPV 二进制递归检查。
 6. 自动生成 adapter ID 和 node-resolved digest。Kata digest 包含源 handler 配置及 Kata 配置内容。
+   options 编码或配置读取失败时报告 runtime_digest_unavailable，handler 保持 unresolved；
+   reconcile 阶段生成摘要失败时返回错误，停止此次配置及 registry 写入。
 7. 仅把路径无关的 inventory 发布给控制面；真实路径留在节点 registry。
 
 ### 7.2 发布方式

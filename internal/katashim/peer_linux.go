@@ -15,33 +15,29 @@
 package katashim
 
 import (
+	"context"
 	"fmt"
-	"golang.org/x/sys/unix"
 	"net"
+
+	"github.com/containerd/ttrpc"
+	"golang.org/x/sys/unix"
 )
 
 // peerPID reads the kernel credentials of the node-local listening socket, without
 // requiring a Connect RPC (runtime-rs rejects that RPC before sandbox Create).
 func peerPID(conn net.Conn) (int, error) {
-	socket, ok := conn.(*net.UnixConn)
-	if !ok {
-		return 0, fmt.Errorf("Kata shim requires a Unix socket")
-	}
-	raw, err := socket.SyscallConn()
-	if err != nil {
-		return 0, err
-	}
-	var credentials *unix.Ucred
-	var readErr error
-	if err := raw.Control(func(fd uintptr) {
-		credentials, readErr = unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED)
-	}); err != nil {
-		return 0, err
-	}
-	if readErr != nil {
-		return 0, readErr
-	}
-	if credentials.Uid != 0 || credentials.Pid <= 0 {
+	var pid int
+	check := ttrpc.UnixCredentialsFunc(func(credentials *unix.Ucred) error {
+		var err error
+		pid, err = rootPeerPID(credentials)
+		return err
+	})
+	_, _, err := check.Handshake(context.Background(), conn)
+	return pid, err
+}
+
+func rootPeerPID(credentials *unix.Ucred) (int, error) {
+	if credentials == nil || credentials.Uid != 0 || credentials.Pid <= 0 {
 		return 0, fmt.Errorf("Kata shim must have a root-owned socket peer")
 	}
 	return int(credentials.Pid), nil

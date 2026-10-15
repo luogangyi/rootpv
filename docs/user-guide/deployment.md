@@ -99,6 +99,8 @@ kubectl -n rootpv-system get configmap rootpv-runtime-adapters -o yaml
 
 对于 Kata，还需出现 persistent-rootfs-kata-qemu，且目标节点带有
 openfuyao.cn/rootpv-adapter-kata-qemu-v2 标签。Pod 能力标签与具体 adapter 就绪标签均需确认。
+若 inventory 报告 runtime_digest_unavailable，检查 Kata ConfigPath 的可读性和 node-agent 日志；
+摘要生成失败的 handler 不会被标记 resolved，reconcile 阶段的摘要错误会阻止此次配置和 registry 写入。
 
 ## 启用持久 rootfs
 

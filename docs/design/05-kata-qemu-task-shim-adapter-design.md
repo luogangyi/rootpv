@@ -32,6 +32,8 @@ flowchart TD
 设备选项、annotations、RuntimeClass overhead 和 scheduling；runtime_path 改为每个
 adapter 的生成别名。别名指向单一 containerd-shim-rootpv-kata-v2。
 节点 registry 保存真实 Kata binary 路径和节点摘要；集群 API 不发布这些路径。
+Kata 摘要生成必须成功编码源 options 并读取完整配置；发现阶段失败报告 runtime_digest_unavailable，
+reconcile 阶段失败返回错误，停止此次配置与 registry 写入。
 
 Proxy StartShim 调用原 Kata start，完整转发 options stdin、namespace、id、address、
 publish-binary 和 debug，再创建自己的 task socket。Sandbox 固定委托地址和 adapter
@@ -66,6 +68,7 @@ rootfsd 重启恢复 flock；proxy 或 Kata shim 任一仍存活时保留租约�
 
 单元测试覆盖 imported handler 发现、QEMU 类型限制、配置缺失、导入循环、原配置保持、
 adapter 不匹配、sandbox/sidecar 路径、创建回滚、卸载失败、共享 shim Shutdown 和活跃 shim 租约保留。
+CI 回归还覆盖空凭据、非 root peer、凭据检查后的连接与 deadline、摘要错误、分阶段创建回滚和代理终止错误。
 集群验证覆盖 Pod 重建持久化、文件权限/链接、单写者互斥、rootfsd 重启、普通 Kata Pod 与删除清理。
 
 Kata 使用和重建步骤见 [使用指南](../user-guide/kata-qemu.md)，功能证据见

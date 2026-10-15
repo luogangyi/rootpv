@@ -134,10 +134,13 @@ func reconcileCatalogAdapter(raw, effective map[string]any, adapter config.Catal
 	if err != nil {
 		return localAdapterEntryV2{}, false, nil
 	}
+	digest, err := resolvedHandlerDigest(adapter.SourceHandler, adapter.RuntimeType, resolved, source, opts.HostRoot)
+	if err != nil {
+		return localAdapterEntryV2{}, false, err
+	}
 	if err := installAdapterHandler(raw, adapter, source, opts); err != nil {
 		return localAdapterEntryV2{}, false, err
 	}
-	digest := resolvedHandlerDigest(adapter.SourceHandler, adapter.RuntimeType, resolved, source, opts.HostRoot)
 	return localAdapterEntryV2{SourceHandler: adapter.SourceHandler, RootfsHandler: adapter.RootfsHandler, RuntimeType: adapter.RuntimeType, DelegateBinary: resolved, ClusterDigest: adapter.ClusterDigest, NodeResolvedDigest: digest}, true, nil
 }
 

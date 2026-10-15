@@ -71,6 +71,8 @@ installer 同时安装 OCI wrapper 和 Kata proxy shim。node-agent 读取主配
 克隆源 handler 的 options 和 annotations；runc 修改 BinaryName，Kata 修改 runtime_path。
 原 RuntimeClass 的 scheduling、tolerations 和 overhead 保留到 Shadow RuntimeClass。
 业务 Pod 继续填写 runtimeClassName: kata-qemu。
+发现时若无法生成完整的 Kata 配置摘要，handler 会保持 unresolved（runtime_digest_unavailable）；
+reconcile 阶段生成摘要失败会返回错误，停止此次配置和 registry 写入。排查步骤见 [Kata 指南](../../docs/user-guide/kata-qemu.md)。
 
 rootfsd、Controller 和 installer 应使用同一版本镜像。仅启用 discovery 的当前安装路径
 接入 Kata；旧静态 runc/NVIDIA 清单与 legacy adapter 配置不提供 Kata 支持。

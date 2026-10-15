@@ -13,10 +13,11 @@
 package node
 
 import (
-	"github.com/BurntSushi/toml"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/BurntSushi/toml"
 
 	"gitcode.com/openFuyao/rootpv/internal/config"
 )
@@ -125,14 +126,17 @@ func writeExecutable(t *testing.T, root, relative string) {
 	}
 }
 
-func TestKataQemuDiscoveryAndReconcileImportedRuntime(t *testing.T) {
+func setupImportedKataRuntime(t *testing.T) (string, string, []byte) {
+	t.Helper()
 	root := t.TempDir()
 	writeExecutable(t, root, "opt/kata/runtime-rs/bin/containerd-shim-kata-v2")
 	writeExecutable(t, root, "usr/local/bin/containerd-shim-rootpv-kata-v2")
-	_ = os.MkdirAll(filepath.Join(root, "etc/containerd"), 0o755)
 	configPath := filepath.Join(root, "etc/containerd/config.toml")
-	main := []byte("version = 2\nimports = [\"/etc/containerd/kata.toml\"]\n[plugins.'io.containerd.grpc.v1.cri'.containerd]\n  default_runtime_name = \"runc\"\n")
-	_ = os.WriteFile(configPath, main, 0o644)
+	writeRuntimeConfigFile(t, configPath, []byte(`version = 2
+imports = ["/etc/containerd/kata.toml"]
+[plugins.'io.containerd.grpc.v1.cri'.containerd]
+  default_runtime_name = "runc"
+`))
 	imported := []byte(`[plugins.'io.containerd.grpc.v1.cri'.containerd.runtimes.kata-qemu]
  runtime_type = "io.containerd.kata-qemu.v2"
  runtime_path = "/opt/kata/runtime-rs/bin/containerd-shim-kata-v2"
@@ -141,8 +145,23 @@ func TestKataQemuDiscoveryAndReconcileImportedRuntime(t *testing.T) {
 [plugins.'io.containerd.grpc.v1.cri'.containerd.runtimes.kata-qemu.options]
  ConfigPath = "/etc/containerd/qemu.toml"
 `)
-	_ = os.WriteFile(filepath.Join(root, "etc/containerd/kata.toml"), imported, 0o644)
-	_ = os.WriteFile(filepath.Join(root, "etc/containerd/qemu.toml"), []byte("[hypervisor.qemu]\npath = '/opt/kata/qemu'\n"), 0o644)
+	writeRuntimeConfigFile(t, filepath.Join(root, "etc/containerd/kata.toml"), imported)
+	writeRuntimeConfigFile(t, filepath.Join(root, "etc/containerd/qemu.toml"), []byte("[hypervisor.qemu]\npath = '/opt/kata/qemu'\n"))
+	return root, configPath, imported
+}
+
+func writeRuntimeConfigFile(t *testing.T, path string, content []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestKataQemuDiscoveryAndReconcileImportedRuntime(t *testing.T) {
+	root, configPath, imported := setupImportedKataRuntime(t)
 	inventory, err := DiscoverRuntimeInventory(configPath, RuntimeDiscoveryOptions{HostRoot: root, NodeUID: "node"})
 	if err != nil {
 		t.Fatal(err)
@@ -168,7 +187,10 @@ func TestKataQemuDiscoveryAndReconcileImportedRuntime(t *testing.T) {
 		t.Fatal("Kata not ready")
 	}
 	var raw map[string]any
-	data, _ := os.ReadFile(configPath)
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, err = toml.Decode(string(data), &raw)
 	if err != nil {
 		t.Fatal(err)
@@ -180,12 +202,19 @@ func TestKataQemuDiscoveryAndReconcileImportedRuntime(t *testing.T) {
 	if _, ok := mapValue(shadow["options"])["BinaryName"]; ok {
 		t.Fatal("Kata received OCI BinaryName")
 	}
-	after, _ := os.ReadFile(filepath.Join(root, "etc/containerd/kata.toml"))
+	after, err := os.ReadFile(filepath.Join(root, "etc/containerd/kata.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(after) != string(imported) {
 		t.Fatal("vendor import changed")
 	}
-	_ = os.WriteFile(filepath.Join(root, "etc/containerd/qemu.toml"), []byte("[hypervisor.clh]\npath = '/opt/kata/clh'\n"), 0o644)
-	inventory, err = DiscoverRuntimeInventory(configPath, RuntimeDiscoveryOptions{HostRoot: root, NodeUID: "node"})
+}
+
+func TestKataQemuDiscoveryRejectsCLHConfig(t *testing.T) {
+	root, configPath, _ := setupImportedKataRuntime(t)
+	writeRuntimeConfigFile(t, filepath.Join(root, "etc/containerd/qemu.toml"), []byte("[hypervisor.clh]\npath = '/opt/kata/clh'\n"))
+	inventory, err := DiscoverRuntimeInventory(configPath, RuntimeDiscoveryOptions{HostRoot: root, NodeUID: "node"})
 	if err != nil {
 		t.Fatal(err)
 	}

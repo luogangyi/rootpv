@@ -141,9 +141,12 @@ func discoverHandler(name string, table map[string]any, opts RuntimeDiscoveryOpt
 		handler.Reason = "adapter_id_invalid"
 		return handler
 	}
-	handler.AdapterID = id
-	handler.Resolved = true
-	handler.NodeResolvedDigest = resolvedHandlerDigest(name, handler.RuntimeType, resolved, table, opts.HostRoot)
+	digest, err := resolvedHandlerDigest(name, handler.RuntimeType, resolved, table, opts.HostRoot)
+	if err != nil {
+		handler.Reason = "runtime_digest_unavailable"
+		return handler
+	}
+	handler.AdapterID, handler.Resolved, handler.NodeResolvedDigest = id, true, digest
 	return handler
 }
 

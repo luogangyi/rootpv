@@ -32,6 +32,9 @@ func loadContainerdConfig(path, hostRoot string) (map[string]any, []byte, error)
 
 func loadContainerdImports(path, hostRoot string, stack map[string]bool, depth int) (map[string]any, []byte, error) {
 	path = filepath.Clean(path)
+	if stack == nil {
+		stack = make(map[string]bool)
+	}
 	if depth > 16 || stack[path] {
 		return nil, nil, fmt.Errorf("containerd imports cycle or depth exceeded: %s", path)
 	}
@@ -41,12 +44,16 @@ func loadContainerdImports(path, hostRoot string, stack map[string]bool, depth i
 	if err != nil {
 		return nil, nil, err
 	}
-	var raw map[string]any
+	raw := make(map[string]any)
 	if _, err := toml.Decode(string(data), &raw); err != nil {
 		return nil, nil, fmt.Errorf("decode containerd config %s: %w", path, err)
 	}
 	evidence := append([]byte(nil), data...)
-	for _, pattern := range stringSliceConfig(raw["imports"]) {
+	imports, ok := raw["imports"]
+	if !ok {
+		return raw, evidence, nil
+	}
+	for _, pattern := range stringSliceConfig(imports) {
 		if filepath.IsAbs(pattern) {
 			pattern = hostPath(hostRoot, pattern)
 		} else {
@@ -70,7 +77,7 @@ func loadContainerdImports(path, hostRoot string, stack map[string]bool, depth i
 			for _, key := range []string{"version", "root", "state", "imports"} {
 				delete(extra, key)
 			}
-			mergeConfig(raw, extra)
+			raw = mergeConfig(raw, extra)
 			evidence = append(evidence, content...)
 		}
 	}
@@ -88,20 +95,26 @@ func stringSliceConfig(value any) []string {
 				result = append(result, s)
 			}
 		}
+	default:
+		return nil
 	}
 	return result
 }
 
-func mergeConfig(dst, src map[string]any) {
+func mergeConfig(dst, src map[string]any) map[string]any {
+	if dst == nil {
+		dst = make(map[string]any)
+	}
 	for key, value := range src {
 		if nested, ok := value.(map[string]any); ok {
 			if existing, ok := dst[key].(map[string]any); ok {
-				mergeConfig(existing, nested)
+				dst[key] = mergeConfig(existing, nested)
 				continue
 			}
 		}
 		dst[key] = value
 	}
+	return dst
 }
 
 func validateKataQemuConfig(table map[string]any, hostRoot string) error {
@@ -113,24 +126,38 @@ func validateKataQemuConfig(table map[string]any, hostRoot string) error {
 	if _, err := toml.DecodeFile(hostPath(hostRoot, path), &raw); err != nil {
 		return fmt.Errorf("kata_config_unreadable")
 	}
-	hypervisors := mapValue(raw["hypervisor"])
+	hypervisor, ok := raw["hypervisor"]
+	if !ok {
+		return fmt.Errorf("kata_hypervisor_not_qemu")
+	}
+	hypervisors := mapValue(hypervisor)
 	if len(hypervisors) != 1 || len(mapValue(hypervisors["qemu"])) == 0 {
 		return fmt.Errorf("kata_hypervisor_not_qemu")
 	}
-	if name := stringValue(mapValue(raw["runtime"])["hypervisor_name"]); name != "" && name != "qemu" {
+	runtime, ok := raw["runtime"]
+	if !ok {
+		return nil
+	}
+	if name := stringValue(mapValue(runtime)["hypervisor_name"]); name != "" && name != "qemu" {
 		return fmt.Errorf("kata_hypervisor_not_qemu")
 	}
 	return nil
 }
 
-func resolvedHandlerDigest(name, runtimeType, delegate string, table map[string]any, hostRoot string) string {
+func resolvedHandlerDigest(name, runtimeType, delegate string, table map[string]any, hostRoot string) (string, error) {
 	evidence := []byte(name + "\x00" + runtimeType + "\x00" + delegate)
 	if config.IsKataQemuRuntimeType(runtimeType) {
-		options, _ := json.Marshal(table)
+		options, err := json.Marshal(table)
+		if err != nil {
+			return "", fmt.Errorf("encode Kata runtime options: %w", err)
+		}
 		evidence = append(evidence, options...)
 		configPath := stringValue(mapValue(table["options"])["ConfigPath"])
-		content, _ := os.ReadFile(hostPath(hostRoot, configPath))
+		content, err := os.ReadFile(hostPath(hostRoot, configPath))
+		if err != nil {
+			return "", fmt.Errorf("read Kata config for digest: %w", err)
+		}
 		evidence = append(evidence, content...)
 	}
-	return sha256Hex(evidence)
+	return sha256Hex(evidence), nil
 }

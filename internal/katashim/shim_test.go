@@ -14,16 +14,58 @@ package katashim
 
 import (
 	"context"
+	"errors"
+	"os"
+	"os/exec"
 	"reflect"
+	"strings"
 	"testing"
 
 	task "github.com/containerd/containerd/api/runtime/task/v2"
+	"github.com/containerd/containerd/namespaces"
+	"github.com/containerd/containerd/runtime/v2/shim"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 type controlTask struct {
 	task.TaskService
 	calls []string
+}
+
+func TestStartArgsPreserveNamespaceAndPublishBinary(t *testing.T) {
+	ctx := namespaces.WithNamespace(context.Background(), "test-namespace")
+	args, err := startArgs(ctx, shim.StartOpts{ID: "sandbox", Address: "/run/containerd.sock", ContainerdBinary: "/opt/containerd", Debug: true})
+	want := []string{"-namespace", "test-namespace", "-id", "sandbox", "-address", "/run/containerd.sock", "-publish-binary", "/opt/containerd", "-debug"}
+	if err != nil || !reflect.DeepEqual(args, want) {
+		t.Fatalf("args=%v, error=%v", args, err)
+	}
+	if _, err := startArgs(context.Background(), shim.StartOpts{}); err == nil {
+		t.Fatal("accepted a missing namespace")
+	}
+}
+
+func TestStartArgsUseInheritedPublishBinary(t *testing.T) {
+	previous := os.Args
+	os.Args = []string{"rootpv-shim", "-publish-binary", "/inherited/containerd"}
+	t.Cleanup(func() { os.Args = previous })
+	args, err := startArgs(namespaces.WithNamespace(context.Background(), "test"), shim.StartOpts{})
+	if err != nil || args[len(args)-1] != "/inherited/containerd" {
+		t.Fatalf("args=%v, error=%v", args, err)
+	}
+}
+
+func TestStopFailedProxyPreservesCleanupErrors(t *testing.T) {
+	cause := errors.New("proxy not ready")
+	if err := stopFailedProxy(&os.Process{Pid: 0}, cause); !errors.Is(err, cause) || !strings.Contains(err.Error(), "stop failed RootPV proxy") {
+		t.Fatalf("lost kill error: %v", err)
+	}
+	child := exec.Command("sh", "-c", "exit 0")
+	if err := child.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := stopFailedProxy(child.Process, cause); err != cause {
+		t.Fatalf("already exited proxy: %v", err)
+	}
 }
 
 func (d *controlTask) Connect(context.Context, *task.ConnectRequest) (*task.ConnectResponse, error) {
@@ -69,13 +111,13 @@ func TestShutdownRetainsProxyForOtherSandboxTasks(t *testing.T) {
 }
 
 func TestDelegateBootstrapAddress(t *testing.T) {
-	for _, input := range []string{"unix:///run/kata.sock\n", "{\"version\":2,\"address\":\"unix:///run/kata.sock\",\"protocol\":\"ttrpc\"}"} {
+	for _, input := range []string{"unix:///run/kata.sock\n", `{"version":2,"address":"unix:///run/kata.sock","protocol":"ttrpc"}`} {
 		address, err := parseAddress([]byte(input))
 		if err != nil || address != "unix:///run/kata.sock" {
 			t.Fatalf("%q: %q %v", input, address, err)
 		}
 	}
-	for _, input := range []string{"", "{\"version\":2,\"address\":\"x\",\"protocol\":\"grpc\"}"} {
+	for _, input := range []string{"", `{"version":2,"address":"x","protocol":"grpc"}`} {
 		if _, err := parseAddress([]byte(input)); err == nil {
 			t.Fatalf("accepted %q", input)
 		}

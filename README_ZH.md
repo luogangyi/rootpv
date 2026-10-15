@@ -276,6 +276,8 @@ spec:
 
 QEMU adapter 将其映射为 persistent-rootfs-kata-qemu，保留原 scheduling 和 overhead。
 PVC 仍通过 Webhook 注入的只读 anchor 挂载；未被选中的 sidecar 保持普通根文件系统。
+Kata 发现时若无法编码 handler options 或读取摘要所需的配置，会报告 runtime_digest_unavailable；
+reconcile 阶段生成摘要失败时返回错误，不安装该 handler。
 原 handler 的安装要求、非默认路径和操作步骤见 [Kata 使用指南](docs/user-guide/kata-qemu.md)。
 [完整测试 YAML](tests/e2e/manifests/kata-qemu.yaml) 包含 Namespace、PV、PVC 和双容器 Pod。
 原 handler 名称不同于 kata-qemu 时，adapter ID 由 catalog 推导，检查实际生成结果。

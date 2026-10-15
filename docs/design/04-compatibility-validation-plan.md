@@ -237,6 +237,7 @@ PVC 对照；U03 必须最后执行，并使用专用短生命周期测试安装
 | KQ06 | 正常删除 | Kata Delete 后 merged 消失、state 删除、lease released；已通过；强制删除与 OOM 待验证 |
 | KQ07 | 普通 Kata 回归 | 不 opt-in 的 Pod 保持原 RuntimeClass、没有 adapter annotation；已通过 |
 | KQ08 | 发布矩阵补全 | 动态 CSI、containerd/节点重启、QEMU/代理崩溃、升级回滚、性能、设备、checkpoint 恢复待验证 |
+| KQ09 | 配置与 peer 校验失败 | 单元测试覆盖缺失 QEMU 配置、摘要读取/编码错误、空或非 root socket 凭据、凭据检查后的连接与 deadline；不替代真实集群故障注入 |
 
 证据组合：Linux AMD64、Kubernetes v1.34.3（厂商构建）、containerd 2.1.1、
 Kata 4.2.0 Rust、QEMU 11.0.1、guest kernel 6.18.35、ext4 local RWO PVC。

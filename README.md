@@ -290,6 +290,8 @@ spec:
 
 The QEMU adapter maps it to persistent-rootfs-kata-qemu and preserves the original scheduling and overhead.
 The backing PVC uses the same injected read-only anchor; untargeted sidecars keep ordinary root filesystems.
+Kata discovery reports `runtime_digest_unavailable` if it cannot encode handler options or read the config
+for its digest; reconciliation returns an error before installing the handler when digest generation fails.
 See the [Kata guide](docs/user-guide/kata-qemu.md) for source handler prerequisites, node paths, and the
 [complete Namespace/PV/PVC/Pod test YAML](tests/e2e/manifests/kata-qemu.yaml). Source handler names other
 than kata-qemu have catalog-derived adapter IDs; inspect the generated catalog instead of hardcoding them.
