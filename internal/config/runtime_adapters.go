@@ -25,6 +25,7 @@ const (
 	RuncV2RuntimeType           = "io.containerd.runc.v2"
 	KataV2RuntimeType           = "io.containerd.kata.v2"
 	KataQemuRuntimeType         = "io.containerd.kata-qemu.v2"
+	RunscRuntimeType            = "io.containerd.runsc.v1"
 	maxRuntimeAdapterIDLength   = 48
 )
 
@@ -114,6 +115,8 @@ func (c *RuntimeAdapterConfig) Validate() error {
 	return nil
 }
 
+// ValidateExplicit validates legacy v1 static OCI configuration. Task-shim
+// adapters such as runsc require the catalog v2 discovery/installation path.
 func (a RuntimeAdapter) ValidateExplicit() error {
 	if a.ID == "" || len(a.ID) > maxRuntimeAdapterIDLength || !runtimeAdapterIDPattern.MatchString(a.ID) {
 		return fmt.Errorf("invalid runtime adapter id %q", a.ID)
@@ -128,7 +131,7 @@ func (a RuntimeAdapter) ValidateExplicit() error {
 		return fmt.Errorf("runtime adapter %q has required fields missing", a.ID)
 	}
 	if a.RuntimeType != RuncV2RuntimeType {
-		return fmt.Errorf("runtime adapter %q has unsupported runtime type %q", a.ID, a.RuntimeType)
+		return fmt.Errorf("runtime adapter %q has unsupported runtime type %q in legacy static config; use runtime catalog v2", a.ID, a.RuntimeType)
 	}
 	return nil
 }
@@ -199,6 +202,13 @@ func IsKataQemuRuntimeType(runtimeType string) bool {
 	return runtimeType == KataQemuRuntimeType || runtimeType == KataV2RuntimeType
 }
 
+// SupportedRuntimeType is the catalog v2 runtime allowlist.
 func SupportedRuntimeType(runtimeType string) bool {
-	return runtimeType == RuncV2RuntimeType || IsKataQemuRuntimeType(runtimeType)
+	return IsOCIRuntimeType(runtimeType) || IsKataQemuRuntimeType(runtimeType)
+}
+
+// IsOCIRuntimeType identifies adapters whose delegate implements the OCI CLI.
+// runsc uses its own task shim, which invokes this CLI via binary_name.
+func IsOCIRuntimeType(runtimeType string) bool {
+	return runtimeType == RuncV2RuntimeType || runtimeType == RunscRuntimeType
 }

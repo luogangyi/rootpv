@@ -133,6 +133,7 @@ runtimeAdapterDiscovery:
   - io.containerd.runc.v2
   - io.containerd.kata-qemu.v2
   - io.containerd.kata.v2
+  - io.containerd.runsc.v1
   maxHandlersPerNode: 64
 
 webhook:

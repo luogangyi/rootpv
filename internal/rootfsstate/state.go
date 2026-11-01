@@ -88,6 +88,7 @@ type State struct {
 	NodeResolvedDigest   string          `json:"node_resolved_digest,omitempty"`
 	RootfsEnabled        bool            `json:"rootfs_enabled"`
 	DelegateArgs         []string        `json:"delegate_args,omitempty"`
+	DeleteArgs           []string        `json:"delete_args,omitempty"`
 	CreatedAt            time.Time       `json:"created_at,omitempty"`
 	UpdatedAt            time.Time       `json:"updated_at,omitempty"`
 }

@@ -42,6 +42,7 @@ RootPV uses public Kubernetes, containerd, OCI runtime-spec, and Linux VFS inter
 - PVC-backed, single-writer persistent root filesystems.
 - Strict base-image identity checking to prevent accidental reuse with an incompatible image.
 - Runtime adapters for `io.containerd.runc.v2`-based runtimes, including device-specific runtimes when the node runtime is already installed and discovered.
+- gVisor `io.containerd.runsc.v1` adapters using a private shim config and write-through rootfs; see the [gVisor guide](docs/user-guide/gvisor.md).
 - Kata + QEMU task-shim adapters with explicit `runtime_path` and QEMU `ConfigPath`; see the [Kata guide](docs/user-guide/kata-qemu.md).
 
 The following are out of scope: non-containerd runtimes, non-`overlayfs` snapshotters, rootless or unprivileged node installation, shared read/write use of one root filesystem, automatic rebase/reset across image chains, and converting a writable layer into an OCI image.
@@ -82,7 +83,8 @@ its verification record is published. Entries in **Not yet validated** are not s
 | GPU runtimes | NVIDIA (including MIG/vGPU where available), AMD ROCm, Intel, and MThreads | — | Device workload, persistence, cleanup, and each device-partitioning mode |
 | NPU runtimes | Ascend and other runc-v2-compatible accelerators; whole-device and virtual/partitioned modes tracked separately | — | Vendor workload, persistence, cleanup, and isolation coverage |
 | Kata + QEMU | Linux AMD64; Kubernetes 1.34.3; containerd 2.1.1; Kata 4.2.0 Rust; QEMU 11.0.1; ext4 local RWO PVC | [Persistence, sidecar isolation, single-writer exclusion, rootfsd restart, normal Kata and cleanup](tests/e2e/results/kata-qemu-2026-10-14.md) | Dynamic CSI PVC, node/VM failure recovery, performance and devices |
-| Other independent shims | Kata CLH, runsc, and shims outside the QEMU adapter | gVisor: RootPV opt-in is rejected; a normal gVisor Pod runs without RootPV mutation | Kata CLH, gVisor RootPV workloads, and other independent shims; Kata QEMU support is described in the [Kata guide](docs/user-guide/kata-qemu.md) |
+| gVisor | Linux AMD64; Kubernetes 1.37.1; containerd 2.1.1; runsc 20261012.0; systrap; ext4 local RWO PVC | [Live Webhook/catalog, three persistence generations, sidecars, single-writer exclusion, rootfsd restart and automatic shim exit](tests/e2e/results/gvisor-online-2026-10-20.md) | Dynamic CSI, performance, devices, checkpoint, Webhook/configuration outage recovery and node/Sentry/gofer failure recovery |
+| Other independent shims | Kata CLH and shims outside the implemented adapters | Historical gVisor negative tests apply to the older implementation | Unsupported types must fail closed |
 
 See the [compatibility validation plan and detailed matrix](docs/design/04-compatibility-validation-plan.md) for
 test cases, acceptance criteria, and planned environment coverage.
@@ -327,6 +329,13 @@ The disabled path writes the container writable layer; the enabled path writes t
 The difference therefore represents the end-to-end cost of persistence, not only the runtime wrapper. These
 numbers are a small-sample reference, not a performance SLO; compare them only with runs on the same node,
 storage backend, image cache state, and cluster load.
+
+### gVisor workload
+
+Use `runtimeClassName: gvisor` with the same RootPV annotations and backing PVC. The source runsc handler needs
+explicit TypeUrl/ConfigPath and an absolute binary_name. RootPV generates a private shim config with overlay2=none;
+the source handler remains unchanged. The shim's global startup config must enable grouping=true; setting it only
+in ConfigPath is insufficient. See the [guide](docs/user-guide/gvisor.md) and [complete test YAML](tests/e2e/manifests/gvisor.yaml).
 
 ## Development
 

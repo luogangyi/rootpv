@@ -21,15 +21,18 @@ import (
 	"gitcode.com/openFuyao/rootpv/internal/config"
 )
 
-func TestContainerdImportsFailClosedForMissingExplicitFileAndCycles(t *testing.T) {
-	for _, body := range []string{"imports = ['missing.toml']", "imports = ['config.toml']"} {
+func TestContainerdConfigFailsClosed(t *testing.T) {
+	for _, body := range []string{
+		"imports = ['missing.toml']", "imports = ['config.toml']",
+		"[plugins.'io.containerd.grpc.v1.cri'.containerd]\ndefault_runtime_name = 'runc'\n[plugins.'io.containerd.cri.v1.runtime'.containerd]\ndefault_runtime_name = 'runc'\n",
+	} {
 		root := t.TempDir()
 		path := filepath.Join(root, "config.toml")
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if _, _, err := loadContainerdConfig(path, ""); err == nil {
-			t.Fatalf("accepted broken imports: %s", body)
+			t.Fatalf("accepted unsafe config: %s", body)
 		}
 	}
 }
@@ -88,21 +91,21 @@ func TestResolvedHandlerDigestRejectsIncompleteEvidence(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "qemu.toml")
 	table := map[string]any{"options": map[string]any{"ConfigPath": "/qemu.toml"}}
-	if digest, err := resolvedHandlerDigest("kata", config.KataQemuRuntimeType, "/opt/kata/shim", table, root); err == nil || digest != "" {
+	if digest, err := resolvedHandlerDigest("kata", config.KataQemuRuntimeType, "/opt/kata/shim", runtimeHandlerSource{table: table}, root); err == nil || digest != "" {
 		t.Fatalf("missing config accepted: %q %v", digest, err)
 	}
 	writeRuntimeConfigFile(t, path, []byte("[hypervisor.qemu]\npath = '/opt/kata/qemu'\n"))
-	first, err := resolvedHandlerDigest("kata", config.KataQemuRuntimeType, "/opt/kata/shim", table, root)
+	first, err := resolvedHandlerDigest("kata", config.KataQemuRuntimeType, "/opt/kata/shim", runtimeHandlerSource{table: table}, root)
 	if err != nil || first == "" {
 		t.Fatalf("valid digest: %q %v", first, err)
 	}
 	writeRuntimeConfigFile(t, path, []byte("[hypervisor.qemu]\npath = '/opt/kata/new-qemu'\n"))
-	second, err := resolvedHandlerDigest("kata", config.KataQemuRuntimeType, "/opt/kata/shim", table, root)
+	second, err := resolvedHandlerDigest("kata", config.KataQemuRuntimeType, "/opt/kata/shim", runtimeHandlerSource{table: table}, root)
 	if err != nil || second == first {
 		t.Fatalf("config change absent from digest: %q %v", second, err)
 	}
 	table["unsupported"] = make(chan int)
-	if digest, err := resolvedHandlerDigest("kata", config.KataQemuRuntimeType, "/opt/kata/shim", table, root); err == nil || digest != "" {
+	if digest, err := resolvedHandlerDigest("kata", config.KataQemuRuntimeType, "/opt/kata/shim", runtimeHandlerSource{table: table}, root); err == nil || digest != "" {
 		t.Fatalf("unencodable options accepted: %q %v", digest, err)
 	}
 }

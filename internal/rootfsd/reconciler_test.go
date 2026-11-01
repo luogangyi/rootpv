@@ -19,10 +19,12 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 
 	"golang.org/x/sys/unix"
 
+	"gitcode.com/openFuyao/rootpv/internal/config"
 	"gitcode.com/openFuyao/rootpv/internal/rootfsstate"
 )
 
@@ -455,5 +457,98 @@ func TestKataRecoveryRetainsLeaseWhileEitherShimOwnerLives(t *testing.T) {
 	retained, err := retainRecoveredState(context.Background(), state, fakeProcessChecker{}, fakeRuntimeStateChecker{})
 	if err != nil || retained {
 		t.Fatalf("dead Kata owners retained forever: %v %v", retained, err)
+	}
+}
+
+type runscRecoveryFixture struct {
+	proc, ns, nsenter, log string
+	state                  rootfsstate.State
+}
+
+func newRunscRecoveryFixture(t *testing.T, deleteAction, hostMount string) runscRecoveryFixture {
+	t.Helper()
+	root := t.TempDir()
+	proc := filepath.Join(root, "proc")
+	ns := filepath.Join(proc, "123/ns")
+	if err := os.MkdirAll(ns, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(proc, "1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mnt := filepath.Join(ns, "mnt")
+	if err := os.WriteFile(mnt, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(mnt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatal("missing inode")
+	}
+	mountinfo := filepath.Join(proc, "123/mountinfo")
+	if err := os.WriteFile(mountinfo, []byte("1 0 0:1 / /merged rw - overlay overlay rw\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proc, "1/mountinfo"), []byte(hostMount), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(root, "order")
+	script := `#!/bin/sh
+case "$*" in
+*umount*) echo unmount >> '` + log + `'; : > '` + mountinfo + `';;
+*) printf '%s\n' "$@" > '` + log + `.args'; echo delete >> '` + log + `'; ` + strings.ReplaceAll(deleteAction, "NAMESPACE", ns) + `;;
+esac
+`
+	nsenter := filepath.Join(root, "nsenter")
+	if err := os.WriteFile(nsenter, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	state := rootfsstate.State{ContainerID: "container", FormatVersion: rootfsstate.FormatDelegationV1, RuntimeType: config.RunscRuntimeType, Phase: rootfsstate.PhaseDeleting, MountNamespace: stat.Ino, MergedDir: "/merged", DelegateBinary: "/opt/gvisor/runsc", DelegateArgs: []string{"--root=/run/runsc", "create", "container"}}
+	return runscRecoveryFixture{proc: proc, ns: ns, nsenter: nsenter, log: log, state: state}
+}
+
+func TestRunscRecoveryClosesGoferBeforeUnmount(t *testing.T) {
+	for _, tc := range []struct {
+		name, action, host, order string
+		failed                    bool
+	}{
+		{"normal", "true", "", "delete\nunmount\n", false},
+		{"delete failure", "echo gofer-busy >&2; exit 1", "", "delete\n", true},
+		{"namespace exits", "rm -rf 'NAMESPACE'", "", "delete\n", false},
+		{"propagated host mount", "rm -rf 'NAMESPACE'", "1 0 0:1 / /merged rw - overlay overlay rw\n", "delete\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRunscRecoveryFixture(t, tc.action, tc.host)
+			f.state.DeleteArgs = []string{"--root=/run/runsc", "--debug", "delete", "container"}
+			err := (NamespaceRecoveryCleaner{ProcRoot: f.proc, Nsenter: f.nsenter}).Cleanup(context.Background(), f.state)
+			if (err != nil) != tc.failed {
+				t.Fatalf("cleanup error: %v", err)
+			}
+			order, err := os.ReadFile(f.log)
+			if err != nil || string(order) != tc.order {
+				t.Fatalf("order=%q error=%v", order, err)
+			}
+			args, err := os.ReadFile(f.log + ".args")
+			want := "-t\n123\n-m\n--\n/opt/gvisor/runsc\n--root=/run/runsc\n--debug\ndelete\n--force\ncontainer\n"
+			if err != nil || string(args) != want {
+				t.Fatalf("delegate arguments=%q error=%v", args, err)
+			}
+		})
+	}
+}
+
+func TestRunscRecoveryMissingNamespaceFailsClosed(t *testing.T) {
+	f := newRunscRecoveryFixture(t, "true", "")
+	if err := os.RemoveAll(f.ns); err != nil {
+		t.Fatal(err)
+	}
+	if err := (NamespaceRecoveryCleaner{ProcRoot: f.proc, Nsenter: f.nsenter}).Cleanup(context.Background(), f.state); err == nil {
+		t.Fatal("unverified namespace fallback accepted")
+	}
+	if _, err := os.Stat(f.log); !os.IsNotExist(err) {
+		t.Fatalf("delegate was invoked: %v", err)
 	}
 }

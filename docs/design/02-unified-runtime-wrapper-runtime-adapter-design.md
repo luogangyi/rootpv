@@ -1,5 +1,9 @@
 # RootPV 统一 Runtime Wrapper 与 Runtime Adapter 设计
 
+> **2026-10-20 更新：** 已增加 [gVisor runsc adapter](06-gvisor-runsc-runtime-adapter-design.md)。
+> io.containerd.runsc.v1 通过 shim TOML 的 binary_name 接入 OCI wrapper，生成配置关闭内部临时 overlay。
+> 下文关于旧实现拒绝 gVisor 的叙述保留历史语境；当前能力以新设计和兼容性矩阵为准。
+
 **文档状态：** 已评审
 
 **设计日期：** 2026-07-16
@@ -82,7 +86,7 @@ delegateRuntimeByWrapper:
 
 - 自动执行 annotation 中给出的任意宿主机 binary；
 - 把所有 runtime 合并成同一个 containerd handler；
-- 通过本 OCI wrapper 自动支持独立 task shim；Kata QEMU 由 2026-10-14 的独立 task adapter 接入，runsc 仍不支持；
+- 通过本 OCI wrapper 自动支持独立 task shim；Kata QEMU 由 2026-10-14 的独立 task adapter 接入，runsc.v1 已通过独立 shim 配置 adapter 接入，见 2026-10-20 更新；
 - 消除 RuntimeClass、containerd handler 和节点 runtime 安装要求；
 - 在 admission 阶段推测尚未完成调度的 Pod 最终会落到哪个节点；
 - 保证未指定 RuntimeClass 的 Pod 跨异构节点重建时仍使用相同 runtime。
@@ -557,7 +561,7 @@ wrapper 必须确认 rootfsd 返回结果与本地 registry 解析一致。两�
 | 企业自定义 runc wrapper | 可适配 | 显式 registry、handler clone 和 CLI 兼容验证 |
 | Kata + QEMU | 独立 task adapter | 不进入 OCI BinaryName wrapper；明确 QEMU 配置时通过 task proxy，见新设计 |
 | Kata CLH | 不支持 | 无对应 task adapter |
-| gVisor/runsc 独立 shim | 不支持 | 需要独立 shim proxy/adapter RFC |
+| gVisor/runsc.v1 | 独立 shim 配置 adapter | binary_name 委托 OCI wrapper、overlay2=none；见 [设计](06-gvisor-runsc-runtime-adapter-design.md) |
 
 统一 wrapper 改善的是 runc-v2 adapter 的配置扩展性，不扩大 BinaryName hook 本身的技术边界。
 
@@ -635,7 +639,7 @@ wrapper 必须确认 rootfsd 返回结果与本地 registry 解析一致。两�
 - 不同节点具有不同 `default_runtime_name`；
 - 默认 handler 修改和 containerd 重启期间 readiness 变化；
 - Pod 跨节点重建后使用目标节点默认 runtime；
-- 默认 runtime 为未实现类型（例如 Kata CLH/gVisor）时明确标记不支持；QEMU 类型按新 task adapter 规则判定；
+- 默认 runtime 为未实现类型（例如 Kata CLH/未知 shim）时明确标记不支持；QEMU 类型按新 task adapter 规则判定；
 - 用户显式 RuntimeClass 优先于 NodeDefault；
 - `Fixed` 策略保持集群固定 adapter。
 

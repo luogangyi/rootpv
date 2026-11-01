@@ -32,11 +32,14 @@ type RuntimeReconcileOptions struct {
 	WrapperBinary  string
 	RegistryPath   string
 	KataShimBinary string
+	beforeWrite    func() error
 }
 
 type RuntimeReconcileResult struct {
 	Readiness map[string]string
 	Changed   bool
+	// Local diagnostics for reconcile logging; not published as node inventory.
+	Unavailable map[string]string
 }
 
 type localAdapterRegistryV2 struct {
@@ -55,7 +58,7 @@ type localAdapterEntryV2 struct {
 }
 
 // ReconcileRuntimeAdapters 从目录中的源 handler 克隆 RootPV shadow handler，
-// runc 替换 BinaryName，Kata QEMU 替换 runtime_path；
+// runc 替换 BinaryName，runsc 生成独立 shim 配置，Kata QEMU 替换 runtime_path；
 // 原厂 handler 始终不被改写。成功后同时写入仅 root 可读的本地 registry，调用方才可重载 containerd。
 func ReconcileRuntimeAdapters(containerdConfig string, catalog config.RuntimeCatalog, opts RuntimeReconcileOptions) (RuntimeReconcileResult, error) {
 	if catalog.FormatVersion != config.RuntimeCatalogFormatVersion {
@@ -82,11 +85,26 @@ func ReconcileRuntimeAdapters(containerdConfig string, catalog config.RuntimeCat
 	// annotation allowlist active after a namespace migration.
 	removeLegacyRuntimeHandlers(raw)
 	registry := localAdapterRegistryV2{FormatVersion: runtimeAdapterRegistryV2, CatalogGeneration: catalog.Generation, Adapters: map[string]localAdapterEntryV2{}}
-	result := RuntimeReconcileResult{Readiness: map[string]string{}}
+	result := RuntimeReconcileResult{Readiness: map[string]string{}, Unavailable: map[string]string{}}
+	beforeWrite := opts.beforeWrite
+	opts.beforeWrite = func() error {
+		result.Changed = true
+		if beforeWrite != nil {
+			return beforeWrite()
+		}
+		return nil
+	}
 	for _, adapter := range catalog.Adapters {
 		entry, ok, err := reconcileCatalogAdapter(raw, effective, adapter, opts)
 		if err != nil {
-			return RuntimeReconcileResult{}, err
+			if adapter.RuntimeType != config.RunscRuntimeType {
+				return RuntimeReconcileResult{}, err
+			}
+			// raw retains the runsc handler; only legacy runc aliases are removed above.
+			// Omit the failed adapter from the new registry to deny new creates.
+			// Existing tasks keep their saved delegation route and immutable shim files.
+			result.Unavailable[adapter.ID] = err.Error()
+			continue
 		}
 		if !ok {
 			continue
@@ -94,7 +112,7 @@ func ReconcileRuntimeAdapters(containerdConfig string, catalog config.RuntimeCat
 		registry.Adapters[adapter.ID] = entry
 		result.Readiness[adapter.ID] = readinessValue(adapter.ClusterDigest)
 	}
-	configChanged, err := writeTOMLIfChanged(containerdConfig, data, raw)
+	configChanged, err := writeTOMLWithHook(containerdConfig, data, raw, opts.beforeWrite)
 	if err != nil {
 		return RuntimeReconcileResult{}, err
 	}
@@ -102,11 +120,11 @@ func ReconcileRuntimeAdapters(containerdConfig string, catalog config.RuntimeCat
 	if err != nil {
 		return RuntimeReconcileResult{}, err
 	}
-	registryChanged, err := writeFileIfChanged(opts.RegistryPath, registryData, 0o600)
+	registryChanged, err := writeFileWithHook(opts.RegistryPath, registryData, 0o600, opts.beforeWrite)
 	if err != nil {
 		return RuntimeReconcileResult{}, err
 	}
-	result.Changed = configChanged || registryChanged
+	result.Changed = result.Changed || configChanged || registryChanged
 	return result, nil
 }
 
@@ -129,19 +147,77 @@ func reconcileCatalogAdapter(raw, effective map[string]any, adapter config.Catal
 			return localAdapterEntryV2{}, false, nil
 		}
 	}
+	handlerSource := runtimeHandlerSource{table: source}
 	delegate := adapterDelegate(source, adapter.SourceHandler, opts.HostRoot)
+	if adapter.RuntimeType == config.RunscRuntimeType {
+		snapshot, err := loadRunscConfig(source, opts.HostRoot)
+		if err != nil {
+			return localAdapterEntryV2{}, false, err
+		}
+		handlerSource.runsc, delegate = snapshot, snapshot.binary
+	}
 	resolved, err := resolveSafeDelegate(delegate, RuntimeDiscoveryOptions{HostRoot: opts.HostRoot, WrapperPaths: []string{opts.WrapperBinary, kataShimBinary(opts)}}.withDefaults())
 	if err != nil {
 		return localAdapterEntryV2{}, false, nil
 	}
-	digest, err := resolvedHandlerDigest(adapter.SourceHandler, adapter.RuntimeType, resolved, source, opts.HostRoot)
+	digest, err := resolvedHandlerDigest(adapter.SourceHandler, adapter.RuntimeType, resolved, handlerSource, opts.HostRoot)
 	if err != nil {
 		return localAdapterEntryV2{}, false, err
 	}
-	if err := installAdapterHandler(raw, adapter, source, opts); err != nil {
+	plugin, err := adapterRuntimePlugin(effective, adapter.SourceHandler)
+	if err != nil {
+		return localAdapterEntryV2{}, false, err
+	}
+	handler, err := buildAdapterHandler(adapter, handlerSource, opts)
+	if err != nil {
+		return localAdapterEntryV2{}, false, err
+	}
+	if err := installCRIRuntimeHandler(raw, plugin, adapter.RootfsHandler, handler); err != nil {
 		return localAdapterEntryV2{}, false, err
 	}
 	return localAdapterEntryV2{SourceHandler: adapter.SourceHandler, RootfsHandler: adapter.RootfsHandler, RuntimeType: adapter.RuntimeType, DelegateBinary: resolved, ClusterDigest: adapter.ClusterDigest, NodeResolvedDigest: digest}, true, nil
+}
+
+// Select the source handler's runtime plugin, including imported tables.
+// runc can use containerd's implicit default without an explicit handler.
+// loadContainerdConfig rejects multiple runtime tables before this selection.
+func adapterRuntimePlugin(effective map[string]any, sourceHandler string) (string, error) {
+	plugins := mapValue(effective["plugins"])
+	for _, name := range criRuntimePluginNames {
+		table := mapValue(mapValue(plugins[name])["containerd"])
+		if len(table) == 0 {
+			continue
+		}
+		if _, ok := mapValue(table["runtimes"])[sourceHandler]; ok {
+			return name, nil
+		}
+	}
+	if sourceHandler == "runc" {
+		for _, name := range criRuntimePluginNames {
+			if len(mapValue(mapValue(plugins[name])["containerd"])) > 0 {
+				return name, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("containerd CRI runtime table is unavailable")
+}
+
+// Materialize only the selected runtime table after the handler is ready.
+// Vendor settings remain in imports; unrelated plugins are never expanded.
+func installCRIRuntimeHandler(raw map[string]any, name, handlerName string, handler map[string]any) error {
+	if raw == nil {
+		return fmt.Errorf("containerd config is nil")
+	}
+	plugins := mapValue(raw["plugins"])
+	plugin := mapValue(plugins[name])
+	table := mapValue(plugin["containerd"])
+	runtimes := mapValue(table["runtimes"])
+	runtimes[handlerName] = handler
+	table["runtimes"] = runtimes
+	plugin["containerd"] = table
+	plugins[name] = plugin
+	raw["plugins"] = plugins
+	return nil
 }
 
 func adapterSource(raw map[string]any, sourceHandler string) map[string]any {
@@ -169,39 +245,40 @@ func adapterDelegate(source map[string]any, sourceHandler, hostRoot string) stri
 	return ""
 }
 
-func installAdapterHandler(raw map[string]any, adapter config.CatalogRuntimeAdapter, source map[string]any, opts RuntimeReconcileOptions) error {
+func buildAdapterHandler(adapter config.CatalogRuntimeAdapter, source runtimeHandlerSource, opts RuntimeReconcileOptions) (map[string]any, error) {
 	aliasOpts := opts
 	if config.IsKataQemuRuntimeType(adapter.RuntimeType) {
 		aliasOpts.WrapperBinary = kataShimBinary(opts)
 		if !executable(hostPath(opts.HostRoot, aliasOpts.WrapperBinary)) {
-			return fmt.Errorf("Kata proxy shim is not installed: %s", aliasOpts.WrapperBinary)
+			return nil, fmt.Errorf("Kata proxy shim is not installed: %s", aliasOpts.WrapperBinary)
 		}
 	}
 	wrapperBinary, err := ensureAdapterWrapper(aliasOpts, adapter.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	for _, table := range criRuntimeTables(raw) {
-		runtimes := mapValue(table["runtimes"])
-		clone := cloneMap(source)
-		clone["pod_annotations"] = appendStringValue(clone["pod_annotations"], "openfuyao.cn/*")
-		clone["container_annotations"] = appendStringValue(clone["container_annotations"], "openfuyao.cn/*")
-		if config.IsKataQemuRuntimeType(adapter.RuntimeType) {
-			clone["runtime_path"] = wrapperBinary
-		} else {
-			options := mapValue(clone["options"])
-			options["BinaryName"] = wrapperBinary
-			clone["options"] = options
-		}
-		runtimes[adapter.RootfsHandler] = clone
-		table["runtimes"] = runtimes
+	if adapter.RuntimeType == config.RunscRuntimeType {
+		return buildRunscHandler(adapter, source, opts, wrapperBinary)
 	}
-	return nil
+	clone := cloneMap(source.table)
+	clone["pod_annotations"] = appendStringValue(clone["pod_annotations"], "openfuyao.cn/*")
+	clone["container_annotations"] = appendStringValue(clone["container_annotations"], "openfuyao.cn/*")
+	if config.IsKataQemuRuntimeType(adapter.RuntimeType) {
+		clone["runtime_path"] = wrapperBinary
+	} else {
+		options := mapValue(clone["options"])
+		options["BinaryName"] = wrapperBinary
+		clone["options"] = options
+	}
+	return clone, nil
 }
 
 func removeLegacyRuntimeHandlers(raw map[string]any) {
 	for _, table := range criRuntimeTables(raw) {
 		runtimes := mapValue(table["runtimes"])
+		if len(runtimes) == 0 {
+			continue
+		}
 		delete(runtimes, "persistent-rootfs-runc")
 		delete(runtimes, "persistent-rootfs-nvidia")
 		table["runtimes"] = runtimes
@@ -238,8 +315,8 @@ func appendStringValue(value any, required string) []string {
 // sandbox OCI spec, so the alias is the only immutable execution identity the
 // wrapper receives for sandbox create/delete operations.
 func ensureAdapterWrapper(opts RuntimeReconcileOptions, adapterID string) (string, error) {
-	if adapterID == "" {
-		return "", fmt.Errorf("runtime adapter ID is required")
+	if adapterID == "" || filepath.Base(adapterID) != adapterID || adapterID == "." || adapterID == ".." {
+		return "", fmt.Errorf("invalid runtime adapter ID")
 	}
 	alias := adapterWrapperBinary(opts.WrapperBinary, adapterID)
 	target := hostPath(opts.HostRoot, alias)
@@ -289,6 +366,10 @@ func cloneMap(source map[string]any) map[string]any {
 }
 
 func writeTOMLIfChanged(path string, previous []byte, raw map[string]any) (bool, error) {
+	return writeTOMLWithHook(path, previous, raw, nil)
+}
+
+func writeTOMLWithHook(path string, previous []byte, raw map[string]any, beforeWrite func() error) (bool, error) {
 	var encoded bytes.Buffer
 	if err := toml.NewEncoder(&encoded).Encode(raw); err != nil {
 		return false, err
@@ -303,12 +384,21 @@ func writeTOMLIfChanged(path string, previous []byte, raw map[string]any) (bool,
 	if err != nil {
 		return false, err
 	}
-	return true, writeFileAtomicMode(path, encoded.Bytes(), info.Mode().Perm())
+	return writeFileWithHook(path, encoded.Bytes(), info.Mode().Perm(), beforeWrite)
 }
 
 func writeFileIfChanged(path string, data []byte, mode os.FileMode) (bool, error) {
+	return writeFileWithHook(path, data, mode, nil)
+}
+
+func writeFileWithHook(path string, data []byte, mode os.FileMode, beforeWrite func() error) (bool, error) {
 	if current, err := os.ReadFile(path); err == nil && bytes.Equal(current, data) {
 		return false, nil
+	}
+	if beforeWrite != nil {
+		if err := beforeWrite(); err != nil {
+			return false, err
+		}
 	}
 	return true, writeFileAtomicMode(path, data, mode)
 }

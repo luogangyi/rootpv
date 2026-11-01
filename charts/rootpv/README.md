@@ -105,3 +105,15 @@ helm template rootpv charts/rootpv --namespace rootpv-system --include-crds
 先清理 RootPV workload 和活跃写层租约，再卸载 Chart。节点 handler、生成的别名、
 registry 与 Shadow RuntimeClass 当前需根据安装备份另行清理；完整步骤和共享安装边界见
 [部署指南](../../docs/user-guide/deployment.md#卸载与节点配置清理)。
+
+## gVisor
+
+当前源码支持 io.containerd.runsc.v1，通过原生 shim 的配置文件 binary_name 使用 OCI wrapper，
+无需额外 RootPV shim。TypeUrl=io.containerd.runsc.v1.options、绝对 ConfigPath 和 binary_name
+必须显式配置；启动阶段的全局 /run/containerd/runsc/config.toml 或
+/etc/containerd/runsc/config.toml 必须 grouping=true，按此优先级检查。
+仅在 handler ConfigPath 设置 grouping 不够。生成的 /etc/rootpv/runsc/<adapter-id>.toml 为 0600，保留原 flags 并设置
+overlay2=none，原配置不改写。使用 runtimeClassName: gvisor；详见
+[gVisor 指南](../../docs/user-guide/gvisor.md)和 [完整测试清单](../../tests/e2e/manifests/gvisor.yaml)。
+Chart 渲染的专用在线部署已验证真实准入、catalog 和 shim 自动退出，见
+[限定组合记录](../../tests/e2e/results/gvisor-online-2026-10-20.md)。

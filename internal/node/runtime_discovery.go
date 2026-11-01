@@ -26,6 +26,8 @@ import (
 
 const runtimeInventoryVersion = "rootpv-runtime-inventory-v1"
 
+var criRuntimePluginNames = [...]string{"io.containerd.cri.v1.runtime", "io.containerd.grpc.v1.cri"}
+
 type RuntimeDiscoveryOptions struct {
 	NodeUID               string
 	HostRoot              string
@@ -104,7 +106,7 @@ func (opts RuntimeDiscoveryOptions) withDefaults() RuntimeDiscoveryOptions {
 	return opts
 }
 
-// discoverHandler 解析单个 runc v2 handler 的真实 delegate 路径，并生成节点解析摘要。
+// discoverHandler 解析已支持 handler 的真实 delegate 路径，并生成节点解析摘要。
 func discoverHandler(name string, table map[string]any, opts RuntimeDiscoveryOptions) config.DiscoveredRuntimeHandler {
 	handler := config.DiscoveredRuntimeHandler{Name: name, RuntimeType: stringValue(table["runtime_type"])}
 	if !config.SupportedRuntimeType(handler.RuntimeType) {
@@ -112,6 +114,17 @@ func discoverHandler(name string, table map[string]any, opts RuntimeDiscoveryOpt
 		return handler
 	}
 	delegate := stringValue(mapValue(table["options"])["BinaryName"])
+	source := runtimeHandlerSource{table: table}
+	if handler.RuntimeType == config.RunscRuntimeType {
+		snapshot, err := loadRunscConfig(table, opts.HostRoot)
+		if err != nil {
+			// Keep local paths and OS diagnostics out of the published inventory.
+			handler.Reason, _, _ = strings.Cut(err.Error(), ":")
+			return handler
+		}
+		delegate = snapshot.binary
+		source.runsc = snapshot
+	}
 	if config.IsKataQemuRuntimeType(handler.RuntimeType) {
 		delegate = stringValue(table["runtime_path"])
 		if err := validateKataQemuConfig(table, opts.HostRoot); err != nil {
@@ -141,7 +154,7 @@ func discoverHandler(name string, table map[string]any, opts RuntimeDiscoveryOpt
 		handler.Reason = "adapter_id_invalid"
 		return handler
 	}
-	digest, err := resolvedHandlerDigest(name, handler.RuntimeType, resolved, table, opts.HostRoot)
+	digest, err := resolvedHandlerDigest(name, handler.RuntimeType, resolved, source, opts.HostRoot)
 	if err != nil {
 		handler.Reason = "runtime_digest_unavailable"
 		return handler
@@ -175,11 +188,8 @@ func resolveSafeDelegate(delegate string, opts RuntimeDiscoveryOptions) (string,
 func criRuntimeTables(raw map[string]any) []map[string]any {
 	plugins := mapValue(raw["plugins"])
 	var tables []map[string]any
-	for name, value := range plugins {
-		if !strings.Contains(name, "cri") {
-			continue
-		}
-		containerd := mapValue(mapValue(value)["containerd"])
+	for _, name := range criRuntimePluginNames {
+		containerd := mapValue(mapValue(plugins[name])["containerd"])
 		if len(containerd) > 0 {
 			tables = append(tables, containerd)
 		}

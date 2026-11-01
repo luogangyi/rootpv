@@ -27,6 +27,7 @@ import (
 
 	apiv1alpha1 "gitcode.com/openFuyao/rootpv/internal/apis/rootfs/v1alpha1"
 	"gitcode.com/openFuyao/rootpv/internal/rootfsstate"
+	"gitcode.com/openFuyao/rootpv/internal/runtimeargs"
 )
 
 const delegateHelperCommand = "--rootpv-delegate-helper"
@@ -94,9 +95,10 @@ type RuntimeCleaner interface {
 
 type ExecRuntimeCleaner struct{}
 
-// CleanupPartial 在 delegate 已被启动但创建未提交时，主动删除可能残留的 runtime 状态。
-func (ExecRuntimeCleaner) CleanupPartial(ctx context.Context, delegate, containerID string, createArgs, env []string) error {
-	globalArgs := runtimeGlobalArgs(createArgs)
+// CleanupPartial removes a partial runtime or retries an explicit delete. The
+// latter preserves explicit delete flags, defaulting to --force for cleanup.
+func (ExecRuntimeCleaner) CleanupPartial(ctx context.Context, delegate, containerID string, args, env []string) error {
+	globalArgs := runtimeGlobalArgs(args)
 	stateArgs := append(append([]string{}, globalArgs...), "state", containerID)
 	state := exec.CommandContext(ctx, delegate, stateArgs...)
 	state.Env = env
@@ -108,7 +110,7 @@ func (ExecRuntimeCleaner) CleanupPartial(ctx context.Context, delegate, containe
 		}
 		return fmt.Errorf("inspect partial runtime state: %w: %s", err, strings.TrimSpace(string(output)))
 	}
-	deleteArgs := append(append([]string{}, globalArgs...), "delete", "--force", containerID)
+	deleteArgs := partialRuntimeDeleteArgs(args, containerID)
 	remove := exec.CommandContext(ctx, delegate, deleteArgs...)
 	remove.Env = env
 	if output, err := remove.CombinedOutput(); err != nil {
@@ -117,13 +119,28 @@ func (ExecRuntimeCleaner) CleanupPartial(ctx context.Context, delegate, containe
 	return nil
 }
 
-func runtimeGlobalArgs(args []string) []string {
-	for i, arg := range args {
-		if arg == "create" || arg == "run" {
-			return append([]string(nil), args[:i]...)
+func partialRuntimeDeleteArgs(args []string, containerID string) []string {
+	index, _ := invocationCommand(args)
+	if index < 0 || args[index] != "delete" {
+		return append(runtimeGlobalArgs(args), "delete", "--force", containerID)
+	}
+	// Honor an explicit force value, including false. Go flag parsing stops at
+	// the first positional argument, so inspect only the command's flag prefix.
+	for _, arg := range args[index+1:] {
+		if !strings.HasPrefix(arg, "-") || arg == "--" {
+			break
+		}
+		if arg == "--force" || arg == "-force" || strings.HasPrefix(arg, "--force=") || strings.HasPrefix(arg, "-force=") {
+			return append([]string(nil), args...)
 		}
 	}
-	return nil
+	result := append([]string(nil), args[:index+1]...)
+	result = append(result, "--force")
+	return append(result, args[index+1:]...)
+}
+
+func runtimeGlobalArgs(args []string) []string {
+	return runtimeargs.Global(args)
 }
 
 func (r ExecCommandRunner) Run(ctx context.Context, path string, args, env []string) error {

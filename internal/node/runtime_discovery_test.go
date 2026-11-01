@@ -79,11 +79,11 @@ func TestDiscoverRuntimeInventoryFailsClosedWithoutVendorBinaryName(t *testing.T
 	}
 }
 
-func TestDiscoverRuntimeInventoryMarksNonRuncV2Unsupported(t *testing.T) {
+func TestDiscoverRuntimeInventoryMarksUnknownTaskShimUnsupported(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte(`
 [plugins.'io.containerd.grpc.v1.cri'.containerd.runtimes.ascend]
-  runtime_type = "io.containerd.runsc.v1"
+  runtime_type = "io.containerd.runsc.v2"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}

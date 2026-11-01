@@ -1,5 +1,9 @@
 # RootPV 项目方案设计及立项评审
 
+> **2026-10-20 更新：** 已增加 [gVisor runsc adapter](06-gvisor-runsc-runtime-adapter-design.md)。
+> io.containerd.runsc.v1 通过 shim TOML 的 binary_name 接入 OCI wrapper，生成配置关闭内部临时 overlay。
+> 下文关于旧实现拒绝 gVisor 的叙述保留历史语境；当前能力以新设计和兼容性矩阵为准。
+
 **文档状态：** 已评审
 
 **日期：** 2026-07-13

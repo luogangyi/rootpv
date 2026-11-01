@@ -15,6 +15,7 @@ package node
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -38,10 +39,17 @@ type RuntimeAdapterReconcilerOptions struct {
 	WrapperBinary    string
 	RegistryPath     string
 	RestartCommand   string
+	SkipReadiness    bool
+	// Remember successful reloads for this loop even if marker cleanup fails.
+	reloadCompleted bool
 }
 
 func StartRuntimeAdapterReconciler(ctx context.Context, nodeName string, opts RuntimeAdapterReconcilerOptions) {
 	if nodeName == "" || opts.ContainerdConfig == "" || opts.RegistryPath == "" {
+		return
+	}
+	if strings.TrimSpace(opts.RestartCommand) == "" {
+		log.Printf("runtime adapter reconciler disabled: containerd restart or reload command is required")
 		return
 	}
 	if opts.Namespace == "" {
@@ -52,10 +60,18 @@ func StartRuntimeAdapterReconciler(ctx context.Context, nodeName string, opts Ru
 		log.Printf("runtime adapter reconciler disabled: in-cluster config unavailable: %v", err)
 		return
 	}
+	previousUnavailable := ""
 	sync := func() {
-		syncRuntimeAdapters(ctx, client, nodeName, opts)
+		previousUnavailable = syncRuntimeAdapters(ctx, client, nodeName, &opts, previousUnavailable)
 	}
 	RunPeriodically(ctx, 2*time.Second, sync)
+}
+
+func (opts RuntimeAdapterReconcilerOptions) publishReadiness(ctx context.Context, client kubernetes.Interface, nodeName string, readiness map[string]string) error {
+	if opts.SkipReadiness {
+		return nil
+	}
+	return PublishAdapterReadiness(ctx, client, nodeName, readiness)
 }
 
 // inClusterClient 创建组件共用的 Kubernetes 客户端；调用者负责记录与自身语义相关的错误信息。
@@ -68,29 +84,88 @@ func inClusterClient() (kubernetes.Interface, error) {
 }
 
 // syncRuntimeAdapters 根据控制面下发的目录生成本节点的 shadow handler，并在配置生效后发布就绪状态。
-func syncRuntimeAdapters(ctx context.Context, client kubernetes.Interface, nodeName string, opts RuntimeAdapterReconcilerOptions) {
+func syncRuntimeAdapters(ctx context.Context, client kubernetes.Interface, nodeName string, opts *RuntimeAdapterReconcilerOptions, previousUnavailable string) string {
 	catalog, err := loadRuntimeCatalog(ctx, client, opts.Namespace)
 	if err != nil {
 		log.Printf("load runtime catalog: %v", err)
-		return
+		if err := opts.publishReadiness(ctx, client, nodeName, nil); err != nil {
+			log.Printf("withdraw runtime adapter readiness: %v", err)
+		}
+		return previousUnavailable
 	}
+	result, err := reconcileAndActivateAdapters(ctx, client, nodeName, opts, catalog)
+	if err != nil {
+		log.Printf("activate runtime adapters: %v", err)
+		if err := opts.publishReadiness(ctx, client, nodeName, nil); err != nil {
+			log.Printf("withdraw runtime adapter readiness: %v", err)
+		}
+		return previousUnavailable
+	}
+	if err := opts.publishReadiness(ctx, client, nodeName, result.Readiness); err != nil {
+		log.Printf("publish runtime adapter readiness: %v", err)
+		return previousUnavailable
+	}
+	unavailable := fmt.Sprint(result.Unavailable)
+	if unavailable != previousUnavailable {
+		for id, reason := range result.Unavailable {
+			log.Printf("runtime adapter %q unavailable: %s", id, reason)
+		}
+	}
+	return unavailable
+}
+
+// Persist reload intent before a changed file. A failed reload or interrupted
+// reconcile withholds readiness and retries even when files already match.
+func reconcileAndActivateAdapters(ctx context.Context, client kubernetes.Interface, nodeName string, opts *RuntimeAdapterReconcilerOptions, catalog config.RuntimeCatalog) (RuntimeReconcileResult, error) {
 	backup, err := os.ReadFile(opts.ContainerdConfig)
 	if err != nil {
-		log.Printf("read containerd config before adapter reconcile: %v", err)
-		return
+		return RuntimeReconcileResult{}, err
 	}
-	result, err := ReconcileRuntimeAdapters(opts.ContainerdConfig, catalog, RuntimeReconcileOptions{HostRoot: opts.HostRoot, WrapperBinary: opts.WrapperBinary, RegistryPath: opts.RegistryPath})
+	marker := opts.RegistryPath + ".pending-reload"
+	_, err = os.Stat(marker)
+	if err != nil && !os.IsNotExist(err) {
+		return RuntimeReconcileResult{}, err
+	}
+	pending := err == nil && !opts.reloadCompleted
+	if pending {
+		if err := opts.publishReadiness(ctx, client, nodeName, nil); err != nil {
+			return RuntimeReconcileResult{}, err
+		}
+	}
+	beforeWrite := func() error {
+		if pending {
+			return nil
+		}
+		if err := opts.publishReadiness(ctx, client, nodeName, nil); err != nil {
+			return err
+		}
+		if err := writeFileAtomicMode(marker, []byte("reload required\n"), 0o600); err != nil {
+			return err
+		}
+		opts.reloadCompleted = false
+		pending = true
+		return nil
+	}
+	result, err := ReconcileRuntimeAdapters(opts.ContainerdConfig, catalog, RuntimeReconcileOptions{
+		HostRoot: opts.HostRoot, WrapperBinary: opts.WrapperBinary, RegistryPath: opts.RegistryPath, beforeWrite: beforeWrite,
+	})
 	if err != nil {
-		log.Printf("reconcile node runtime adapters: %v", err)
-		return
+		return RuntimeReconcileResult{}, err
 	}
-	if err := restartContainerd(ctx, opts, result.Changed, backup); err != nil {
-		log.Printf("restart containerd after adapter reconcile failed; restored previous config: %v", err)
-		return
+	if err := restartContainerd(ctx, *opts, result.Changed || pending, backup); err != nil {
+		return RuntimeReconcileResult{}, err
 	}
-	if err := PublishAdapterReadiness(ctx, client, nodeName, result.Readiness); err != nil {
-		log.Printf("publish runtime adapter readiness: %v", err)
+	if pending {
+		opts.reloadCompleted = true
 	}
+	if opts.reloadCompleted {
+		err := os.Remove(marker)
+		opts.reloadCompleted = err != nil && !os.IsNotExist(err)
+		if opts.reloadCompleted && pending {
+			log.Printf("containerd reload succeeded; retrying marker cleanup without another reload: %v", err)
+		}
+	}
+	return result, nil
 }
 
 func loadRuntimeCatalog(ctx context.Context, client kubernetes.Interface, namespace string) (config.RuntimeCatalog, error) {
@@ -107,12 +182,18 @@ func loadRuntimeCatalog(ctx context.Context, client kubernetes.Interface, namesp
 
 // restartContainerd 只在配置发生变化时重启 containerd；重启失败会立即恢复变更前的配置。
 func restartContainerd(ctx context.Context, opts RuntimeAdapterReconcilerOptions, changed bool, backup []byte) error {
-	if !changed || opts.RestartCommand == "" {
+	if !changed {
 		return nil
 	}
+	if strings.TrimSpace(opts.RestartCommand) == "" {
+		return fmt.Errorf("containerd restart or reload command is required")
+	}
 	if err := exec.CommandContext(ctx, "/bin/sh", "-ec", opts.RestartCommand).Run(); err != nil {
-		_ = writeFileAtomicMode(opts.ContainerdConfig, backup, 0o644)
-		return err
+		info, statErr := os.Stat(opts.ContainerdConfig)
+		if statErr != nil {
+			return errors.Join(err, statErr)
+		}
+		return errors.Join(err, writeFileAtomicMode(opts.ContainerdConfig, backup, info.Mode().Perm()))
 	}
 	return nil
 }
