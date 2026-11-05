@@ -177,39 +177,50 @@ func writeV1CutoverRegistry(t *testing.T) v1CutoverRegistry {
 }
 
 func TestWrapperCutoverDeleteReleasesPersistedLease(t *testing.T) {
-	runtimeRoot := filepath.Join(t.TempDir(), "runtime")
-	containerDir := filepath.Join(runtimeRoot, "container-id")
-	if err := os.MkdirAll(filepath.Join(containerDir, "merged"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeState(t, runtimeRoot, "container-id", rootfsstate.State{
-		FormatVersion:        rootfsstate.FormatDelegationV1,
-		ContainerID:          "container-id",
-		LeaseID:              "lease-123",
-		Phase:                rootfsstate.PhaseCreated,
-		DelegateBinary:       "/delegate/runc",
-		RuntimeAdapterID:     "runc-v1",
-		RuntimeAdapterMode:   "Explicit",
-		RootfsHandler:        "persistent-rootfs-runc",
-		RuntimeType:          config.RuncV2RuntimeType,
-		ClusterAdapterDigest: "sha256:cluster",
-		NodeResolvedDigest:   "sha256:node",
-		MetaDir:              "/pvc/meta",
-	})
-	releaser := &fakeRootfsClient{}
-	wrapper := Wrapper{
-		Config:    Config{RuntimeAdapterCutover: true, RuntimeRoot: runtimeRoot},
-		Rootfs:    releaser,
-		Mounter:   &fakeOverlayMounter{},
-		Unmounter: &fakeUnmounter{},
-		Executor:  &fakeExecutor{},
-	}
-
-	if err := wrapper.Run(context.Background(), "rootfs-runtime-wrapper", []string{"delete", "--force", "container-id"}, nil); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if releaser.releaseRequest.LeaseID != "lease-123" {
-		t.Fatalf("lease release request=%+v, want LeaseID lease-123", releaser.releaseRequest)
+	for _, test := range []struct {
+		name       string
+		unmountErr error
+		verifyErr  error
+		wantOrder  []string
+	}{
+		{name: "success", wantOrder: []string{"unmount", "verify", "delegate", "release"}},
+		{name: "busy", unmountErr: errors.New("busy"), wantOrder: []string{"unmount"}},
+		{name: "still mounted", verifyErr: errors.New("still mounted"), wantOrder: []string{"unmount", "verify"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runtimeRoot := t.TempDir()
+			state := mergeDelegationState(flatDeleteState(runtimeRoot), rootfsstate.State{
+				RuntimeType: config.RuncV2RuntimeType, DelegateBinary: "/delegate/runc", RootfsEnabled: true,
+				RuntimeAdapterID: "runc-v1", RuntimeAdapterMode: "Explicit", RootfsHandler: "persistent-rootfs-runc",
+				ClusterAdapterDigest: "sha256:cluster", NodeResolvedDigest: "sha256:node",
+			})
+			writeState(t, runtimeRoot, state.ContainerID, state)
+			var order []string
+			wrapper := Wrapper{
+				Config:          Config{RuntimeAdapterCutover: true, RuntimeRoot: runtimeRoot},
+				Rootfs:          &orderedDeleteClient{order: &order},
+				NormalUnmounter: &orderedNormalUnmounter{order: &order, err: test.unmountErr},
+				UnmountVerifier: &orderedUnmountVerifier{order: &order, err: test.verifyErr},
+				CommandRunner:   &orderedCommandRunner{order: &order},
+				Unmounter:       &fakeUnmounter{err: test.unmountErr},
+				Executor:        &fakeExecutor{},
+			}
+			err := wrapper.Run(context.Background(), "rootfs-runtime-wrapper", []string{"delete", "--force", state.ContainerID}, nil)
+			wantFailure := test.unmountErr != nil || test.verifyErr != nil
+			if (err != nil) != wantFailure {
+				t.Fatalf("want failure=%v, got %v; operations=%v", wantFailure, err, order)
+			}
+			if !reflect.DeepEqual(order, test.wantOrder) {
+				t.Fatalf("order=%v want=%v", order, test.wantOrder)
+			}
+			_, stateErr := rootfsstate.Load(runtimeRoot, state.ContainerID)
+			if wantFailure && stateErr != nil {
+				t.Fatalf("recovery state lost: %v", stateErr)
+			}
+			if !wantFailure && !os.IsNotExist(stateErr) {
+				t.Fatalf("runtime state should be removed: %v", stateErr)
+			}
+		})
 	}
 }
 

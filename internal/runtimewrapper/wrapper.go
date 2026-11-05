@@ -376,9 +376,11 @@ func (w Wrapper) runCutoverCleanup(ctx context.Context, args, env []string, inv 
 	if err != nil || state.DelegateBinary == "" {
 		return fmt.Errorf("delegation_state_missing")
 	}
-	if state.RuntimeType == config.RunscRuntimeType && state.RootfsEnabled && state.LeaseID != "" {
+	// Flat creates retain their lease when promoted to delegation state. Every
+	// adapter must confirm unmount before release; Nested states have no lease.
+	if state.RootfsEnabled && state.LeaseID != "" {
 		if state.MergedDir == "" {
-			return fmt.Errorf("runsc persistent rootfs state has no merged directory")
+			return fmt.Errorf("persistent rootfs state has no merged directory")
 		}
 		return w.runFlatDelete(ctx, state.DelegateBinary, args, env, state)
 	}
