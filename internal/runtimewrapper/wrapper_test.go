@@ -196,9 +196,10 @@ func TestWrapperCutoverDeleteReleasesPersistedLease(t *testing.T) {
 			})
 			writeState(t, runtimeRoot, state.ContainerID, state)
 			var order []string
+			client := &orderedDeleteClient{order: &order}
 			wrapper := Wrapper{
 				Config:          Config{RuntimeAdapterCutover: true, RuntimeRoot: runtimeRoot},
-				Rootfs:          &orderedDeleteClient{order: &order},
+				Rootfs:          client,
 				NormalUnmounter: &orderedNormalUnmounter{order: &order, err: test.unmountErr},
 				UnmountVerifier: &orderedUnmountVerifier{order: &order, err: test.verifyErr},
 				CommandRunner:   &orderedCommandRunner{order: &order},
@@ -212,6 +213,9 @@ func TestWrapperCutoverDeleteReleasesPersistedLease(t *testing.T) {
 			}
 			if !reflect.DeepEqual(order, test.wantOrder) {
 				t.Fatalf("order=%v want=%v", order, test.wantOrder)
+			}
+			if !wantFailure && (client.releaseRequest.LeaseID != state.LeaseID || client.releaseRequest.ContainerID != state.ContainerID) {
+				t.Fatalf("released wrong lease: %+v", client.releaseRequest)
 			}
 			_, stateErr := rootfsstate.Load(runtimeRoot, state.ContainerID)
 			if wantFailure && stateErr != nil {

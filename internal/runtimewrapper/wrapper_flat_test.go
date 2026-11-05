@@ -616,12 +616,14 @@ func (r *orderedCommandRunner) Run(context.Context, string, []string, []string) 
 }
 
 type orderedDeleteClient struct {
-	order *[]string
-	err   error
+	order          *[]string
+	err            error
+	releaseRequest apiv1alpha1.ReleaseRootfsRequest
 }
 
-func (c *orderedDeleteClient) ReleaseRootfs(context.Context, apiv1alpha1.ReleaseRootfsRequest) (apiv1alpha1.ReleaseRootfsResponse, error) {
+func (c *orderedDeleteClient) ReleaseRootfs(_ context.Context, req apiv1alpha1.ReleaseRootfsRequest) (apiv1alpha1.ReleaseRootfsResponse, error) {
 	*c.order = append(*c.order, "release")
+	c.releaseRequest = req
 	return apiv1alpha1.ReleaseRootfsResponse{Released: c.err == nil}, c.err
 }
 func (c *orderedDeleteClient) ResolveRootfs(context.Context, apiv1alpha1.ResolveRootfsRequest) (apiv1alpha1.ResolveRootfsResponse, error) {
