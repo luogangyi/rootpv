@@ -422,10 +422,14 @@ func (w Wrapper) runCutoverCreate(ctx context.Context, wrapperName string, args,
 		}
 	}
 	delegation := newDelegationState(inv.ContainerID, adapterID, adapter, ShouldMountPersistentRootfs(spec))
-	if err := w.stateStore().Save(w.Config.RuntimeRoot, inv.ContainerID, delegation); err != nil {
-		return err
+	// Flat creates persist routing together with the acquired lease, before
+	// mounting. A rejected resolve must not leave an unrecoverable placeholder.
+	if !delegation.RootfsEnabled || w.Config.OverlayMode != OverlayModeFlatLowerdirs {
+		if err := w.stateStore().Save(w.Config.RuntimeRoot, inv.ContainerID, delegation); err != nil {
+			return err
+		}
 	}
-	if !ShouldMountPersistentRootfs(spec) {
+	if !delegation.RootfsEnabled {
 		return w.exec(adapter.DelegateBinary, args, env)
 	}
 	return w.runCutoverRootfs(ctx, cutoverRootfsRequest{args: args, env: env, inv: inv, delegation: delegation, adapter: adapter})

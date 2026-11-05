@@ -39,11 +39,10 @@ type RecoveryCleaner interface {
 	Cleanup(context.Context, rootfsstate.State) error
 }
 
-// RuntimeStateChecker 检查 RootPV 容器是否仍被 containerd 作为 task 跟踪。
-// containerd 重启后孤儿 shim 或 runc 进程可能暂时仍在，但已脱离 containerd 的 task
-// 无法再触发 wrapper 的 delete 路径，因此不能仅依赖进程 PID 或 runc state 判断。
+// RuntimeStateChecker checks whether containerd still owns the task, including
+// stopped tasks whose shim has yet to finish kill/delete and needs routing state.
 type RuntimeStateChecker interface {
-	Running(context.Context, rootfsstate.State) (bool, error)
+	Present(context.Context, rootfsstate.State) (bool, error)
 }
 
 type Reconciler struct {
@@ -165,6 +164,11 @@ func (c recoveredStateCleaner) cleanup(ctx context.Context, state rootfsstate.St
 	if retained {
 		return nil
 	}
+	// The shim may have released the lease while the task lookup was in flight.
+	// Its namespace can already be gone; only the stale state remains to remove.
+	if c.reconciler.Leases.isReleased(state.LeaseID) {
+		return c.reconciler.removeRuntimeState(state.ContainerID)
+	}
 	if state.Phase == rootfsstate.PhaseCreatingPending && state.AttemptStatus == rootfsstate.AttemptPending {
 		if err := c.reconciler.Leases.RevokeCreate(ctx, state.LeaseID, state.AttemptToken); err != nil {
 			return fmt.Errorf("revoke dead create attempt for %s: %w", state.ContainerID, err)
@@ -199,19 +203,22 @@ func retainRecoveredState(
 	processes ProcessChecker,
 	runtime RuntimeStateChecker,
 ) (bool, error) {
+	// The delegate can exit before the wrapper commits create and hands the
+	// task back to the shim. Absence from containerd is not an orphan yet.
+	if processes.Alive(state.Wrapper) {
+		return true, nil
+	}
 	if state.FormatVersion == rootfsstate.FormatShimV1 {
 		// Kata/virtiofs may still hold a write layer even after a task exits.
 		// Only the shim Delete path releases it while either owner is alive.
-		return processes.Alive(state.Shim) || processes.Alive(state.Wrapper), nil
+		return processes.Alive(state.Shim), nil
 	}
 	if state.FormatVersion == rootfsstate.FormatDelegationV1 && state.RootfsEnabled {
-		return runtime.Running(ctx, state)
+		return runtime.Present(ctx, state)
 	}
 	switch state.Phase {
 	case rootfsstate.PhaseCreated:
 		return true, nil
-	case rootfsstate.PhaseAcquired, rootfsstate.PhaseMounted, rootfsstate.PhaseCreatingPending:
-		return state.Wrapper.Valid() && processes.Alive(state.Wrapper), nil
 	case rootfsstate.PhaseCreatingRegistered:
 		return state.Delegate.Valid() && processes.Alive(state.Delegate), nil
 	default:
@@ -235,13 +242,12 @@ func scanRuntimeStates(runtimeRoot string) ([]rootfsstate.State, error) {
 		if !entry.IsDir() {
 			continue
 		}
-		statePath := rootfsstate.Path(runtimeRoot, entry.Name())
-		if _, err := os.Stat(statePath); os.IsNotExist(err) {
-			continue
-		} else if err != nil {
-			return nil, err
-		}
 		state, err := rootfsstate.Load(runtimeRoot, entry.Name())
+		// Normal delete can remove the file after ReadDir. Check the read itself,
+		// rather than a preceding Stat that leaves a second disappearance window.
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
 		if err != nil {
 			return nil, fmt.Errorf("load runtime state %s: %w", entry.Name(), err)
 		}
@@ -259,13 +265,12 @@ func recoverableDelegationState(state rootfsstate.State) bool {
 		state.LeaseID != "" && state.MetaDir != "" && state.MergedDir != ""
 }
 
-// ContainerdRuntimeStateChecker 以 containerd 的 task 元数据为权威来源。
-// runc 进程在 containerd 重启后可能成为孤儿；只有仍被 containerd 跟踪且处于活跃
-// 状态的 task 才能继续占用 RootPV Overlay。
+// ContainerdRuntimeStateChecker uses task ownership, not process liveness.
+// A stopped task still belongs to the shim until its Delete completes.
 type ContainerdRuntimeStateChecker struct{}
 
-// Running 判断 state 是否仍被 containerd 作为活跃 task 跟踪。
-func (ContainerdRuntimeStateChecker) Running(ctx context.Context, state rootfsstate.State) (bool, error) {
+// Present retains delegation evidence until containerd no longer has the task.
+func (ContainerdRuntimeStateChecker) Present(ctx context.Context, state rootfsstate.State) (bool, error) {
 	namespace := state.RuntimeNamespace
 	if namespace == "" {
 		namespace = "k8s.io"
@@ -282,25 +287,14 @@ func (ContainerdRuntimeStateChecker) Running(ctx context.Context, state rootfsst
 		}
 		return false, fmt.Errorf("load containerd container: %w", err)
 	}
-	task, err := container.Task(ctx, nil)
+	_, err = container.Task(ctx, nil)
 	if err != nil {
 		if errdefs.IsNotFound(err) {
 			return false, nil
 		}
 		return false, fmt.Errorf("load containerd task: %w", err)
 	}
-	status, err := task.Status(ctx)
-	if err != nil {
-		return false, fmt.Errorf("inspect containerd task: %w", err)
-	}
-	switch status.Status {
-	case containerd.Running, containerd.Created, containerd.Paused:
-		return true, nil
-	case containerd.Stopped:
-		return false, nil
-	default:
-		return false, fmt.Errorf("unsupported containerd task status %q", status.Status)
-	}
+	return true, nil
 }
 
 type ProcProcessChecker struct{}

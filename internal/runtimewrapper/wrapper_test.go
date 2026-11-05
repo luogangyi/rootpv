@@ -125,6 +125,30 @@ func TestWrapperCutoverNestedCreatePersistsDelegationBeforeExec(t *testing.T) {
 	}
 }
 
+func TestWrapperCutoverResolveFailureLeavesNoState(t *testing.T) {
+	setup := newFlatCreateRollbackSetup(t, flatCreateSideEffectCase{})
+	registry := writeV1CutoverRegistry(t)
+	spec := readSpec(t, setup.bundle)
+	spec.Annotations[rootfs.AnnotationRuntimeAdapterID] = "runc-v1"
+	spec.Annotations[rootfs.AnnotationRuntimeAdapterMode] = "Explicit"
+	spec.Annotations[rootfs.AnnotationRuntimeAdapterConfigHash] = registry.digest
+	if err := SaveSpec(setup.bundle, &spec); err != nil {
+		t.Fatal(err)
+	}
+	setup.wrapper.Config.RuntimeAdapterCutover = true
+	setup.wrapper.Config.RuntimeAdapterRegistry = registry.path
+	setup.wrapper.Config.AllowedDelegateDirs = []string{registry.delegateDir}
+	resolveErr := errors.New("base_image_mismatch")
+	setup.wrapper.Rootfs = &fakeRootfsClient{resolveErr: resolveErr}
+	err := setup.wrapper.Run(context.Background(), "rootfs-runtime-wrapper", []string{"create", "--bundle", setup.bundle, "container-id"}, nil)
+	if !errors.Is(err, resolveErr) {
+		t.Fatalf("expected original resolve failure, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(setup.runtimeRoot, "container-id")); !os.IsNotExist(err) {
+		t.Fatalf("failed create left runtime state: %v", err)
+	}
+}
+
 type v1CutoverRegistry struct {
 	delegateDir string
 	delegate    string
