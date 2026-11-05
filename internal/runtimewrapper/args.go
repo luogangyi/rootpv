@@ -134,7 +134,7 @@ func isKnownNonMountCommand(command string) bool {
 
 func isContainerCommand(command string) bool {
 	switch command {
-	case "create", "run", "delete", "state", "start", "kill", "pause", "resume", "ps", "events", "exec", "checkpoint", "update":
+	case "create", "run", "delete", "state", "start", "kill", "pause", "resume", "ps", "events", "exec", "checkpoint", "update", "wait":
 		return true
 	default:
 		return false
@@ -144,7 +144,8 @@ func isContainerCommand(command string) bool {
 func flagLikelyHasValue(flag string) bool {
 	switch flag {
 	case "--root", "--log", "--log-format", "--systemd-cgroup", "--rootless", "--console-socket", "--pid-file", "--process", "--preserve-fds",
-		"--signal", "-s", "--env", "--cwd", "--user", "-u", "--process-label", "--apparmor", "--cap", "--additional-gids":
+		"--signal", "-s", "--env", "--cwd", "--user", "-u", "--process-label", "--apparmor", "--cap", "--additional-gids",
+		"--user-log", "--internal-pid-file", "--pid", "--rootpid", "--format", "--interval":
 		return true
 	default:
 		return false
@@ -154,7 +155,7 @@ func flagLikelyHasValue(flag string) bool {
 func flagLikelyHasNoValue(flag string) bool {
 	switch flag {
 	case "--all", "-a", "--detach", "-d", "--force", "--no-pivot", "--no-new-keyring", "--no-subreaper",
-		"--tty", "-t", "--interactive", "-i", "--no-new-privs":
+		"--tty", "-t", "--interactive", "-i", "--no-new-privs", "--stats":
 		return true
 	default:
 		return false

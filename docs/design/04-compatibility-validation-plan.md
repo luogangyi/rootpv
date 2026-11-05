@@ -33,7 +33,7 @@ RootPV 的数据路径依赖 Kubernetes 准入、containerd runtime handler、`o
 | 验证中 | 已有环境或执行记录，但未完成全部必测项 | 不可以 |
 | 待验证 | 已规划但尚未执行 | 不可以 |
 | 已验证（限定用例） | 指定完整组合的部分用例已有明确证据，尚未完成全部发布要求 | 只说明这些用例通过，不扩大到完整兼容性承诺 |
-| 不支持（架构边界） | 当前没有对应的 OCI wrapper 或 task shim adapter；例如 Kata CLH、runsc | 不可以；应验证 fail-closed 行为 |
+| 不支持（架构边界） | 当前没有对应的 OCI wrapper 或 task shim adapter；例如 Kata CLH、未知 shim | 不可以；应验证 fail-closed 行为 |
 | 不适用 | 与该行目标无关，例如设备 runtime 行不适用于无设备节点 | 不适用 |
 
 “已验证”并不替代上游厂商的 Kubernetes、驱动或设备插件支持声明。发布说明必须同时给出 RootPV
@@ -113,11 +113,11 @@ device plugin 版本均是独立组合。每个“待验证”行都应先确认
 | Kata + QEMU（Rust） | io.containerd.kata-qemu.v2；显式 runtime_path/ConfigPath；flat-lowerdirs | task proxy 正向持久化、多容器、互斥、rootfsd 重启和清理 | 已接入，继续补全发布矩阵 | 已验证（限定用例）：Kata 4.2.0 / QEMU 11.0.1 / ext4 local PVC，见结果记录 |
 | Kata 通用 runtime type / Go runtime | 明确 QEMU 配置的 io.containerd.kata.v2；其他 Kata 实现/版本 | 分别完成配置发现、shim 协议和正向 E2E | 高 | 已有配置/单元测试；真实集群组合待验证 |
 | Kata Cloud Hypervisor | kata-clh 等独立类型或非 QEMU 配置 | opt-in 拒绝或无就绪 adapter；普通 Pod 回归 | 负向用例 | 不支持；完整 workload 负向 E2E 待验证 |
-| gVisor | runsc 独立 shim | RootPV opt-in 必须明确拒绝；未 opt-in gVisor Pod 必须不受影响 | 发布阻塞的负向用例 | 不支持（架构边界；M01/M02 已验证） |
+| gVisor | io.containerd.runsc.v1；显式 TypeUrl/ConfigPath/binary_name；全局 grouping=true；flat-lowerdirs | 在线准入/catalog、持久化、sidecar、互斥、rootfsd 重启与自动退出 | 已接入，补全发布矩阵 | 已验证（限定用例）：[2026-10-20 在线功能验收](../../tests/e2e/results/gvisor-online-2026-10-20.md)；动态 CSI、性能和故障恢复待验证 |
 | 其他 microVM/独立 shim | 非 `io.containerd.runc.v2` task shim | 作为不支持类型完成 fail-closed 回归；若要支持需独立 RFC | 观察 | 不支持（架构边界） |
 
 Kata + QEMU 已通过独立 task adapter 的限定正向功能验证；它不使用 runc 的 BinaryName hook。
-CLH、gVisor 和其他未实现 task shim 的“通过”仅指负向用例。QEMU 的结果不能推导其他 hypervisor、
+CLH 和其他未实现 task shim 的“通过”仅指负向用例。QEMU 的结果不能推导其他 hypervisor、
 Kata 实现或版本通过；新增后端仍需独立设计和 E2E。
 
 ### 4.3 组合优先级
@@ -129,7 +129,7 @@ Kata 实现或版本通过；新增后端仍需独立设计和 E2E。
 | P2：架构与存储 | 验证 arm64、内核、XFS | arm64 基础组合；不同内核和 XFS 环境 | 每个高风险维度在至少一个基础组合完成全部基础用例 |
 | P3：设备 runtime | 验证厂商 adapter 和设备工作负载 | 各厂商真实设备节点及匹配 driver/device plugin | 设备用例 + 基础用例全部通过，且记录厂商栈版本 |
 | P4：Kata QEMU 正向兼容 | 完成已接入 task adapter 的发布覆盖 | QEMU Rust、通用 Kata type、Go runtime、动态 CSI | 专项 KQ 用例与适用 C/R/U 用例，分别记录证据 |
-| P5：未支持 shim 负向兼容 | 固化安全边界，避免静默错误路径 | Kata CLH、gVisor 和其他未实现 shim | opt-in 明确拒绝或不就绪、普通工作负载不受影响 |
+| P5：未支持 shim 负向兼容 | 固化安全边界，避免静默错误路径 | Kata CLH 和其他未实现 shim | opt-in 明确拒绝或不就绪、普通工作负载不受影响 |
 
 ## 5. 单个组合的测试用例与通过标准
 
@@ -217,11 +217,11 @@ PVC 对照；U03 必须最后执行，并使用专用短生命周期测试安装
 
 ### 5.4 未支持 microVM 与独立 shim 的负向用例
 
-本节适用于 Kata CLH、gVisor 和其他未实现类型，不用于拒绝已接入的 QEMU adapter。
+本节适用于 Kata CLH 和其他未实现类型，不用于拒绝已接入的 QEMU adapter。
 
 | 编号 | 用例 | 通过标准 |
 | --- | --- | --- |
-| M01 | RootPV opt-in | 使用 Kata CLH/gVisor/其他未实现独立 shim 的 RootPV opt-in Pod 被明确拒绝，错误信息说明不支持的 runtime type |
+| M01 | RootPV opt-in | 使用 Kata CLH/其他未实现独立 shim 的 RootPV opt-in Pod 被明确拒绝，错误信息说明不支持的 runtime type |
 | M02 | 非 opt-in 回归 | 相同 runtime 的普通 Pod 能按其原有路径运行，RootPV 不修改其 handler、配置或运行结果 |
 | M03 | 配置完整性 | 节点代理不为不支持 runtime 创建 Shadow handler、wrapper delegate 或误导性的 ready 标签 |
 
@@ -246,6 +246,17 @@ C06 的所有重启类型或 C10 的性能基线。新可复用清单见
 [tests/e2e/manifests/kata-qemu.yaml](../../tests/e2e/manifests/kata-qemu.yaml)，
 运行与清理步骤见 [Kata 使用指南](../user-guide/kata-qemu.md)。
 
+### 5.6 gVisor 专项验证边界
+
+当前限定组合为 Linux AMD64、内核 5.10（厂商构建）、Kubernetes 1.37.1、containerd 2.1.1、
+runsc 20261012.0、systrap、ext4 local RWO PVC。[在线功能验收](../../tests/e2e/results/gvisor-online-2026-10-20.md)
+覆盖真实 Webhook、inventory/catalog、节点 reconcile、三代双容器重建、0640 权限、链接、
+单写者、rootfsd 重启和自动退出。初次隔离测试采用离线准入并人工清理闲置 shim，保留为历史证据；
+[shim 生命周期记录](../../tests/e2e/results/gvisor-shim-lifecycle-2026-10-20.md)说明全局 grouping 缺失的原因。
+修正后原生与 RootPV 在线 Pod 均只启动一个分组 shim，删除后相关进程自动退出。
+历史 M01/M02 的 gVisor 拒绝记录仅对应旧实现；未知 shim 仍须失败关闭。
+动态 CSI、性能、设备、checkpoint、在线 Webhook/配置中断及节点/Sentry/gofer 故障恢复仍待验证。
+
 ## 6. 自动化、环境接入与结果发布
 
 现有 `tests/e2e/run-functional.sh` 和 `tests/e2e/run-performance.sh` 是 P0 的基础。后续按以下方式
@@ -268,7 +279,7 @@ C06 的所有重启类型或 C10 的性能基线。新可复用清单见
 3. ext4 与 XFS 的 RWO block PVC；
 4. NVIDIA（含 MIG/vGPU）、AMD ROCm、Intel、MThreads GPU，以及 Ascend 整卡和虚拟 NPU 节点；
 5. 配置 QEMU 的 Kata 集群，用于补全动态 CSI、Go runtime、故障恢复和性能验证；
-6. 配置 Kata CLH、gVisor/runsc 或其他未实现 shim 的集群，用于负向兼容回归。
+6. 配置 Kata CLH 或其他未实现 shim 的集群，用于负向兼容回归。
 
 环境接入前应确认可以创建隔离 namespace、使用专用 RWO PVC、在 canary 节点部署特权 RootPV 组件，并能够
 收集必要的节点诊断信息。任何包含生产负载、共享凭据或无法清理测试 PVC 的环境都不应直接用于本方案。

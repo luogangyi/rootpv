@@ -27,7 +27,14 @@ import (
 // loadContainerdConfig follows explicit containerd imports (including globs)
 // through the host filesystem. Source files are never rewritten by discovery.
 func loadContainerdConfig(path, hostRoot string) (map[string]any, []byte, error) {
-	return loadContainerdImports(path, hostRoot, map[string]bool{}, 0)
+	raw, data, err := loadContainerdImports(path, hostRoot, map[string]bool{}, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(criRuntimeTables(raw)) > 1 {
+		return nil, nil, fmt.Errorf("multiple CRI runtime plugins are configured; retain only the active runtime plugin before enabling automatic adapters")
+	}
+	return raw, data, nil
 }
 
 func loadContainerdImports(path, hostRoot string, stack map[string]bool, depth int) (map[string]any, []byte, error) {
@@ -144,20 +151,37 @@ func validateKataQemuConfig(table map[string]any, hostRoot string) error {
 	return nil
 }
 
-func resolvedHandlerDigest(name, runtimeType, delegate string, table map[string]any, hostRoot string) (string, error) {
+// Keep the containerd source table and its validated shim snapshot together
+// when calculating evidence or generating a shadow handler.
+type runtimeHandlerSource struct {
+	table map[string]any
+	runsc *runscConfigSnapshot
+}
+
+func resolvedHandlerDigest(name, runtimeType, delegate string, source runtimeHandlerSource, hostRoot string) (string, error) {
 	evidence := []byte(name + "\x00" + runtimeType + "\x00" + delegate)
-	if config.IsKataQemuRuntimeType(runtimeType) {
-		options, err := json.Marshal(table)
+	if config.IsKataQemuRuntimeType(runtimeType) || runtimeType == config.RunscRuntimeType {
+		options, err := json.Marshal(source.table)
 		if err != nil {
-			return "", fmt.Errorf("encode Kata runtime options: %w", err)
+			return "", fmt.Errorf("encode runtime options: %w", err)
 		}
 		evidence = append(evidence, options...)
-		configPath := stringValue(mapValue(table["options"])["ConfigPath"])
-		content, err := os.ReadFile(hostPath(hostRoot, configPath))
+		content, err := runtimeConfigEvidence(runtimeType, source, hostRoot)
 		if err != nil {
-			return "", fmt.Errorf("read Kata config for digest: %w", err)
+			return "", fmt.Errorf("read runtime config for digest: %w", err)
 		}
 		evidence = append(evidence, content...)
 	}
 	return sha256Hex(evidence), nil
+}
+
+func runtimeConfigEvidence(runtimeType string, source runtimeHandlerSource, hostRoot string) ([]byte, error) {
+	if runtimeType == config.RunscRuntimeType {
+		if source.runsc == nil {
+			return nil, fmt.Errorf("validated runsc config is required")
+		}
+		return append(append([]byte(nil), source.runsc.content...), source.runsc.bootstrap...), nil
+	}
+	configPath := stringValue(mapValue(source.table["options"])["ConfigPath"])
+	return os.ReadFile(hostPath(hostRoot, configPath))
 }

@@ -112,8 +112,13 @@ func RuntimeAdapterID(handler, runtimeType string) (string, error) {
 	}
 	family := "runc-v2"
 	base := "runc"
-	if IsKataQemuRuntimeType(runtimeType) {
+	switch {
+	case IsKataQemuRuntimeType(runtimeType):
 		family, base = "kata-qemu-v2", "kata-qemu"
+	case runtimeType == RunscRuntimeType:
+		family, base = "runsc-v1", "runsc"
+	default:
+		// All other supported types use the runc OCI shim family.
 	}
 	id := family
 	if token != base {

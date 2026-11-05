@@ -157,3 +157,5 @@ mount namespace 内的 OverlayFS，不会将 Kata binary 作为 runc 调用。�
 应单独验证；[2026-10-14 功能验证记录](../../tests/e2e/results/kata-qemu-2026-10-14.md)
 覆盖 Rust runtime、io.containerd.kata-qemu.v2 与 ext4 local PVC。通用 io.containerd.kata.v2
 和 Go Kata runtime 仅有配置/单元测试覆盖，动态 CSI PVC、节点/VM 故障恢复和性能仍待验证。
+
+其他运行时通过各自 adapter 接入；gVisor 支持见 [独立使用指南](gvisor.md)，不会经过 Kata proxy。

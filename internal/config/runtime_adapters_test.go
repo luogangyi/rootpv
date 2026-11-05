@@ -113,3 +113,16 @@ func TestRuntimeAdapterConfigRejectsInvalidAdapterDefinitions(t *testing.T) {
 		})
 	}
 }
+
+func TestRunscCatalogRuntimeSupport(t *testing.T) {
+	if !SupportedRuntimeType(RunscRuntimeType) || !IsOCIRuntimeType(RunscRuntimeType) {
+		t.Fatal("runsc not supported by catalog")
+	}
+	if IsOCIRuntimeType(KataV2RuntimeType) || IsOCIRuntimeType(KataQemuRuntimeType) {
+		t.Fatal("Kata shim must not use the OCI wrapper path")
+	}
+	id, err := RuntimeAdapterID("runsc", RunscRuntimeType)
+	if err != nil || id != "runsc-v1" {
+		t.Fatalf("runsc adapter ID: %q %v", id, err)
+	}
+}

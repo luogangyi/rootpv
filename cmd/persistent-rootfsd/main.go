@@ -38,6 +38,7 @@ func main() {
 	flag.StringVar(&opts.rootfsdSocket, "rootfsd-socket", "/run/persistent-rootfsd/rootfsd.sock", "rootfsd local Unix socket")
 	flag.StringVar(&opts.runtimeRoot, "runtime-root", "/run/rootpv/rootfs", "shared runtime lifecycle state root")
 	flag.BoolVar(&opts.runtimeAdapterDiscovery, "runtime-adapter-discovery", true, "publish discovered runtime inventory")
+	flag.BoolVar(&opts.publishNodeCapabilities, "publish-node-capabilities", true, "publish node capability and adapter readiness labels; disable for isolated manual runtime tests")
 	flag.StringVar(&opts.containerdConfig, "containerd-config", "/host/etc/containerd/config.toml", "host containerd config for runtime discovery")
 	flag.StringVar(&opts.hostRoot, "host-root", "/host", "host filesystem root for runtime discovery")
 	flag.StringVar(&opts.runtimeAdapterRegistry, "runtime-adapter-registry", "/host/etc/rootpv/rootpv-runtime-adapters.yaml", "node-local generated runtime adapter registry")
@@ -57,6 +58,7 @@ type options struct {
 	rootfsdSocket            string
 	runtimeRoot              string
 	runtimeAdapterDiscovery  bool
+	publishNodeCapabilities  bool
 	containerdConfig         string
 	hostRoot                 string
 	runtimeAdapterRegistry   string
@@ -93,7 +95,7 @@ func run(opts options) error {
 	if err := startRootfsdSocket(ctx, opts.rootfsdSocket, manager); err != nil {
 		return err
 	}
-	go node.StartPodReconciler(ctx, opts.nodeName, opts.kubeletRoot, manager)
+	go node.StartPodReconciler(ctx, opts.nodeName, opts.kubeletRoot, manager, opts.publishNodeCapabilities)
 	if opts.runtimeAdapterDiscovery {
 		go node.StartRuntimeInventoryPublisher(ctx, opts.nodeName, opts.containerdConfig, opts.hostRoot)
 		go node.StartRuntimeAdapterReconciler(ctx, opts.nodeName, node.RuntimeAdapterReconcilerOptions{
@@ -103,6 +105,7 @@ func run(opts options) error {
 			WrapperBinary:    "/usr/local/bin/rootfs-runtime-wrapper",
 			RegistryPath:     opts.runtimeAdapterRegistry,
 			RestartCommand:   opts.containerdRestartCommand,
+			SkipReadiness:    !opts.publishNodeCapabilities,
 		})
 	}
 

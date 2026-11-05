@@ -1,6 +1,6 @@
 # RootPV 集群 E2E 测试
 
-本目录包含已部署 RootPV 集群的功能与性能脚本，以及 Kata + QEMU 的完整手工测试清单。
+本目录包含已部署 RootPV 集群的功能与性能脚本，以及 Kata + QEMU、gVisor 的完整手工测试清单。
 脚本通过 SSH 在控制面执行 kubectl，开发机无需保存 kubeconfig。
 测试记录按运行时、存储和版本组合分别解释，不能由一个组合推导全部 runtime 支持。
 
@@ -113,3 +113,16 @@ Kata 的动态 CSI、节点/VM 故障恢复、性能、设备和其他 runtime �
 
 2026-09-03 的历史性能样本为 1 轮预热、每路径 3 轮、每轮 64MiB 同步写入，
 详情见 [原始记录](results/performance-2026-09-03.md)。这些 runc 样本不能用于说明 Kata 性能。
+
+## gVisor 测试
+
+[完整清单](manifests/gvisor.yaml)使用原 gvisor RuntimeClass 和双容器，源 handler 假设为 runsc，
+adapter ID 为 runsc-v1。先按 [gVisor 指南](../../docs/user-guide/gvisor.md)完成原生运行时与 RootPV 安装，
+替换节点、镜像和 local PV 目录后，检查计数由 1 变为 2、首次 UID 保留、sidecar 每轮为新根目录。
+模板要求 ROOTPV_ADAPTER=runsc-v1，其他 handler 需同步调整。
+
+动态 PVC 功能脚本配置可从 configs/example-gvisor.sh 复制，但该脚本的普通 Pod/性能基线仍为
+节点默认 runtime；不能将 runc 与 gVisor 的差异计为 RootPV 开销。
+[在线记录](results/gvisor-online-2026-10-20.md)覆盖真实 Webhook、inventory/catalog、节点 reconcile、
+三代重建、独立校验拒绝和 shim 自动退出。初次 [隔离记录](results/gvisor-2026-10-20.md)使用离线准入，
+保留其历史边界；[分组定位记录](results/gvisor-shim-lifecycle-2026-10-20.md)说明闲置 shim 的原因。

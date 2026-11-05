@@ -1,5 +1,9 @@
 # RootPV Runtime Adapter 自动发现与配置生成设计
 
+> **2026-10-20 更新：** 已增加 [gVisor runsc adapter](06-gvisor-runsc-runtime-adapter-design.md)。
+> io.containerd.runsc.v1 通过 shim TOML 的 binary_name 接入 OCI wrapper，生成配置关闭内部临时 overlay。
+> 下文关于旧实现拒绝 gVisor 的叙述保留历史语境；当前能力以新设计和兼容性矩阵为准。
+
 **文档状态：** 已评审
 
 **设计日期：** 2026-07-17
@@ -85,7 +89,7 @@ adapter ID 和版本
 ### 3.2 非目标
 
 - 安装厂商驱动、device plugin、固件或 OCI runtime；
-- 自动支持任意 task shim、Kata CLH 或 runsc；通用 Kata 类型仅在 QEMU 配置满足条件时接入；
+- 自动支持任意 task shim、Kata CLH 或未知 runsc 类型；通用 Kata 类型仅在 QEMU 配置满足条件时接入；
 - 根据 runtime 名称猜测 binary 路径；
 - 根据 `huawei.com/*`、`nvidia.com/*` 等资源名前缀猜测对应 handler；
 - 自动执行节点上的任意探测脚本；
@@ -723,7 +727,7 @@ openfuyao.cn/rootpv-validation-status=discovered|validated
 - source `BinaryName` 自动解析；
 - stock runc 缺省 BinaryName；
 - vendor handler 缺少 BinaryName 时 unresolved；
-- Kata 的 QEMU 配置、显式路径和 imports；CLH、runsc 等未实现类型 unsupported；
+- Kata 的 QEMU 配置、显式路径和 imports；CLH 和未知 shim 类型 unsupported；runsc.v1 需单独验证 TypeUrl/ConfigPath/binary_name 及完整配置摘要；
 - binary 缺失、不可执行、symlink 指向 wrapper；
 - default handler 识别；
 - inventory 限制、原子 annotation 更新和 stale node UID 防护。

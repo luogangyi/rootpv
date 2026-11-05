@@ -42,6 +42,7 @@ RootPV 仅使用 Kubernetes、containerd、OCI runtime-spec 和 Linux VFS 的公
 - 基于 PVC 的单写持久根文件系统。
 - 严格校验基础镜像身份，防止将已有可写层意外复用到不兼容镜像。
 - 基于 `io.containerd.runc.v2` 的 runtime adapter；节点已正确安装且可发现的设备专用 runtime 也可接入。
+- gVisor io.containerd.runsc.v1 通过独立 shim 配置接入，见 [gVisor 指南](docs/user-guide/gvisor.md)。
 - Kata + QEMU task-shim adapter；源 handler 需显式配置 `runtime_path` 和 QEMU `ConfigPath`，见 [Kata 使用指南](docs/user-guide/kata-qemu.md)。
 
 当前范围不包括：非 containerd 运行时、非 `overlayfs` snapshotter、rootless 或非特权节点安装、一个根文件系统的读写共享、跨镜像链自动 Reset/Rebase，以及将可写层自动转换为 OCI 镜像。
@@ -79,7 +80,8 @@ QEMU 11.0.1 和 ext4 local RWO PVC，已覆盖持久化、sidecar、单写互斥
 | GPU runtime | NVIDIA（环境具备时分别覆盖 MIG/vGPU）、AMD ROCm、Intel 和 MThreads | — | 设备工作负载、持久化、清理和各设备切分形态 |
 | NPU runtime | Ascend 及其他 runc-v2 兼容加速器；整卡和虚拟/切分形态分别记录 | — | 厂商工作负载、持久化、清理和隔离 |
 | Kata + QEMU | Linux AMD64；Kubernetes 1.34.3；containerd 2.1.1；Kata 4.2.0 Rust；QEMU 11.0.1；ext4 local RWO PVC | [持久化、sidecar 隔离、单写互斥、rootfsd 重启、普通 Kata 与清理](tests/e2e/results/kata-qemu-2026-10-14.md) | 动态 CSI PVC、节点/VM 故障恢复、性能与设备 |
-| 其他独立 shim | Kata CLH、runsc 和 QEMU adapter 范围之外的 task shim | gVisor：RootPV opt-in 被拒绝；普通 gVisor Pod 正常运行且未被 RootPV 修改 | Kata CLH、gVisor RootPV 工作负载与其他独立 shim；Kata QEMU 接入见 [Kata 使用指南](docs/user-guide/kata-qemu.md) |
+| gVisor | Linux AMD64；Kubernetes 1.37.1；containerd 2.1.1；runsc 20261012.0；systrap；ext4 local RWO PVC | [在线 Webhook/catalog、三代持久化、sidecar、单写者互斥、rootfsd 重启与 shim 自动退出](tests/e2e/results/gvisor-online-2026-10-20.md) | 动态 CSI、性能、设备、checkpoint、Webhook/配置中断恢复及节点/Sentry/gofer 故障恢复 |
+| 其他独立 shim | Kata CLH 与未实现 adapter 的 shim | 历史 gVisor 负向记录仅对应旧实现 | 未支持类型继续失败关闭 |
 
 测试用例、验收标准和待寻找的环境见[兼容性验证方案与详细矩阵](docs/design/04-compatibility-validation-plan.md)。
 
@@ -310,6 +312,13 @@ Kata 性能尚未测量：
 未启用 RootPV 时写入容器可写层，启用 RootPV 时写入持久根目录。因此表中的差异表示持久根目录
 的端到端成本，并非仅 runtime wrapper 的开销。这些数据仅为小样本参考而非性能 SLO；应仅与相同
 节点、存储后端、镜像缓存状态和集群负载下的历史结果比较。
+
+### gVisor 工作负载
+
+使用 `runtimeClassName: gvisor`，RootPV 注解和 PVC 用法保持一致。源 runsc handler 需显式
+TypeUrl/ConfigPath，配置中提供绝对 binary_name；生成的独立 shim 配置设置 overlay2=none，
+原配置保持原状。详见 [使用指南](docs/user-guide/gvisor.md)和 [完整测试 YAML](tests/e2e/manifests/gvisor.yaml)。
+原生 shim 全局启动配置必须 grouping=true，仅在 handler ConfigPath 设置不够。
 
 ## 开发
 

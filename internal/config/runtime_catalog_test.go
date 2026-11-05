@@ -71,7 +71,7 @@ func TestBuildRuntimeCatalogFailsClosedForUnresolvedAndUnsupportedHandlers(t *te
 		NodeUID: "node-a",
 		Handlers: []DiscoveredRuntimeHandler{
 			{Name: "ascend", RuntimeType: RuncV2RuntimeType, AdapterID: "ascend-runc-v2", Resolved: false, Reason: "delegate_missing"},
-			{Name: "kata", RuntimeType: "io.containerd.runsc.v1", Resolved: true, Reason: "unsupported_runtime_type"},
+			{Name: "kata", RuntimeType: "io.containerd.runsc.v2", Resolved: true, Reason: "unsupported_runtime_type"},
 		},
 	}}, []RuntimeClassSource{{Name: "ascend", Handler: "ascend"}, {Name: "kata", Handler: "kata"}})
 	if err != nil {
@@ -89,5 +89,15 @@ func TestBuildRuntimeCatalogRejectsRuntimeTypeConflictAcrossNodes(t *testing.T) 
 	}, []RuntimeClassSource{{Name: "ascend", Handler: "ascend"}})
 	if err == nil {
 		t.Fatal("expected runtime type conflict to fail closed")
+	}
+}
+
+func TestRunscRuntimeCatalogRoutes(t *testing.T) {
+	catalog, err := BuildRuntimeCatalog([]RuntimeInventory{{NodeUID: "node", Handlers: []DiscoveredRuntimeHandler{{Name: "runsc", RuntimeType: RunscRuntimeType, Resolved: true}}}}, []RuntimeClassSource{{Name: "gvisor", Handler: "runsc"}})
+	if err != nil || len(catalog.Adapters) != 1 || catalog.Adapters[0].ID != "runsc-v1" || len(catalog.Routes) != 1 || catalog.Routes[0].RootfsRuntimeClass != "persistent-rootfs-gvisor" {
+		t.Fatalf("catalog: %#v %v", catalog, err)
+	}
+	if id, err := RuntimeAdapterID("gvisor", RunscRuntimeType); err != nil || id != "gvisor-runsc-v1" {
+		t.Fatalf("ID=%q error=%v", id, err)
 	}
 }

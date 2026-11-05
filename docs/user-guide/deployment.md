@@ -153,3 +153,19 @@ Helm uninstall 当前不会自动恢复 containerd 配置或删除生成的节�
 RootPV Shadow RuntimeClass。需要按安装前备份完成节点配置恢复、验证 containerd 配置
 实际生效，并在确认无存量 task 后移除本次安装的 RootPV 文件。保留原 runc/Kata handler、
 原 RuntimeClass 和原 Kata/QEMU 安装；共享安装不能直接照搬临时测试实例的全量清理步骤。
+
+## gVisor 接入
+
+自动发现支持 io.containerd.runsc.v1。源 options 必须包含 TypeUrl 和绝对 ConfigPath，
+shim TOML 中提供绝对 binary_name。生成的私有配置保留平台等选项，并设置 overlay2=none；
+原生 shim 的全局启动配置还需 grouping=true，仅在 handler ConfigPath 设置不足以控制 shim 分组。
+原生 gVisor handler 不变。原 RuntimeClass 为 gvisor 时，提交相同 RootPV 注解并使用
+runtimeClassName: gvisor。要求 flat-lowerdirs，详见 [gVisor 指南](gvisor.md)。
+真实 Webhook/catalog 与节点自动 reconcile 的限定验证见 [在线记录](../../tests/e2e/results/gvisor-online-2026-10-20.md)。
+
+自动配置需要设置 `--containerd-restart-command`（Helm 已提供）；命令为空时，node-agent
+会记录一次错误并停用 adapter 自动配置，不修改 handler、registry 或 adapter 就绪标签。
+
+仅做手工隔离测试时，node-agent 可同时设置 --runtime-adapter-discovery=false 与
+--publish-node-capabilities=false，避免自动改写 handler、registry 或节点标签；
+这不构成正常自动发现安装路径，需要测试者预先准备路由和准入结果。默认仍启用 capability 发布。

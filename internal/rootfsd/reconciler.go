@@ -26,7 +26,9 @@ import (
 	"github.com/containerd/containerd"
 	"github.com/containerd/errdefs"
 
+	"gitcode.com/openFuyao/rootpv/internal/config"
 	"gitcode.com/openFuyao/rootpv/internal/rootfsstate"
+	"gitcode.com/openFuyao/rootpv/internal/runtimeargs"
 )
 
 type ProcessChecker interface {
@@ -346,48 +348,93 @@ func (c NamespaceRecoveryCleaner) Cleanup(ctx context.Context, state rootfsstate
 	if err != nil {
 		return err
 	}
+	if state.RuntimeType == config.RunscRuntimeType {
+		// Without the original namespace, runtime root visibility cannot be proven.
+		if holder == 0 {
+			return fmt.Errorf("runsc recovery requires the original mount namespace; manual cleanup required")
+		}
+		if err := c.deleteRecoveredDelegate(ctx, state, holder); err != nil {
+			return err
+		}
+		holder, err = findMountNamespaceHolder(procRoot, state.MountNamespace)
+		if err != nil {
+			return err
+		}
+	}
+	if holder != 0 {
+		if err := c.unmountRecoveredRoot(ctx, procRoot, state.MergedDir, holder); err != nil {
+			return err
+		}
+	}
+	if state.RuntimeType == config.RunscRuntimeType {
+		present, err := processMountPresent(procRoot, 1, state.MergedDir)
+		if err != nil {
+			return fmt.Errorf("inspect runsc host mount: %w", err)
+		}
+		if present {
+			return fmt.Errorf("runsc host mount still present: %q", state.MergedDir)
+		}
+		return nil
+	}
 	if holder == 0 {
 		return nil
 	}
-	present, err := processMountPresent(procRoot, holder, state.MergedDir)
+	return c.deleteRecoveredDelegate(ctx, state, holder)
+}
+
+func (c NamespaceRecoveryCleaner) unmountRecoveredRoot(ctx context.Context, procRoot, merged string, holder int) error {
+	present, err := processMountPresent(procRoot, holder, merged)
+	if err != nil || !present {
+		return err
+	}
+	command := c.Nsenter
+	if command == "" {
+		command = "nsenter"
+	}
+	output, err := exec.CommandContext(ctx, command, "-t", strconv.Itoa(holder), "-m", "--", "umount", merged).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("normal unmount in recovered namespace: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	present, err = processMountPresent(procRoot, holder, merged)
 	if err != nil {
 		return err
 	}
 	if present {
-		nsenter := c.Nsenter
-		if nsenter == "" {
-			nsenter = "nsenter"
-		}
-		cmd := exec.CommandContext(ctx, nsenter, "-t", strconv.Itoa(holder), "-m", "--", "umount", state.MergedDir)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("normal unmount in recovered namespace: %w: %s", err, strings.TrimSpace(string(output)))
-		}
-		present, err = processMountPresent(procRoot, holder, state.MergedDir)
+		return fmt.Errorf("mount_still_present: %q", merged)
+	}
+	return nil
+}
+
+func (c NamespaceRecoveryCleaner) deleteRecoveredDelegate(ctx context.Context, state rootfsstate.State, holder int) error {
+	if state.FormatVersion == rootfsstate.FormatShimV1 || !shouldDeleteRecoveredRuntime(state) {
+		return nil
+	}
+	if state.DelegateBinary == "" {
+		return fmt.Errorf("delegate binary is unavailable for recovered cleanup")
+	}
+	global := runtimeGlobalArgs(state.DelegateArgs)
+	if state.RuntimeType == config.RunscRuntimeType {
+		var err error
+		var root string
+		global, root, err = runtimeargs.RunscSavedGlobal(state.DelegateArgs, state.DeleteArgs)
 		if err != nil {
 			return err
 		}
-		if present {
-			return fmt.Errorf("mount_still_present: %q", state.MergedDir)
+		if root == "" {
+			return fmt.Errorf("runsc recovery requires saved absolute --root for %q; manual cleanup required", state.ContainerID)
 		}
 	}
-	if state.FormatVersion != rootfsstate.FormatShimV1 && shouldDeleteRecoveredRuntime(state) {
-		if state.DelegateBinary == "" {
-			return fmt.Errorf("delegate binary is unavailable for recovered cleanup")
-		}
-		global := runtimeGlobalArgs(state.DelegateArgs)
-		deleteArgs := []string{"-t", strconv.Itoa(holder), "-m", "--", state.DelegateBinary}
-		deleteArgs = append(deleteArgs, global...)
-		deleteArgs = append(deleteArgs, "delete", "--force", state.ContainerID)
-		nsenter := c.Nsenter
-		if nsenter == "" {
-			nsenter = "nsenter"
-		}
-		cmd := exec.CommandContext(ctx, nsenter, deleteArgs...)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			message := strings.ToLower(string(output))
-			if !strings.Contains(message, "does not exist") && !strings.Contains(message, "not found") {
-				return fmt.Errorf("delete recovered runtime: %w: %s", err, strings.TrimSpace(string(output)))
-			}
+	args := []string{"-t", strconv.Itoa(holder), "-m", "--", state.DelegateBinary}
+	args = append(args, global...)
+	args = append(args, "delete", "--force", state.ContainerID)
+	command := c.Nsenter
+	if command == "" {
+		command = "nsenter"
+	}
+	if output, err := exec.CommandContext(ctx, command, args...).CombinedOutput(); err != nil {
+		message := strings.ToLower(string(output))
+		if !strings.Contains(message, "does not exist") && !strings.Contains(message, "not found") {
+			return fmt.Errorf("delete recovered runtime: %w: %s", err, strings.TrimSpace(string(output)))
 		}
 	}
 	return nil
@@ -442,11 +489,4 @@ func processMountPresent(procRoot string, pid int, target string) (bool, error) 
 	return false, nil
 }
 
-func runtimeGlobalArgs(args []string) []string {
-	for i, arg := range args {
-		if arg == "create" || arg == "run" {
-			return append([]string(nil), args[:i]...)
-		}
-	}
-	return nil
-}
+func runtimeGlobalArgs(args []string) []string { return runtimeargs.Global(args) }

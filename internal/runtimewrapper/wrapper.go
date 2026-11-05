@@ -120,20 +120,30 @@ type RuntimeStateStore interface {
 	Remove(runtimeRoot, containerID string) error
 }
 
-type nestedDelegationStateStore struct {
+type delegationStateStore struct {
 	store      RuntimeStateStore
 	delegation rootfsstate.State
 }
 
-func (s nestedDelegationStateStore) Load(runtimeRoot, containerID string) (rootfsstate.State, error) {
+func (s delegationStateStore) Load(runtimeRoot, containerID string) (rootfsstate.State, error) {
 	return s.store.Load(runtimeRoot, containerID)
 }
 
-func (s nestedDelegationStateStore) Save(runtimeRoot, containerID string, state rootfsstate.State) error {
-	return s.store.Save(runtimeRoot, containerID, mergeDelegationState(state, s.delegation))
+func (s delegationStateStore) Save(runtimeRoot, containerID string, state rootfsstate.State) error {
+	if state.FormatVersion == rootfsstate.FormatFlatV1 {
+		// Keep the flat transaction's phase and process identities recoverable
+		// while pinning the validated adapter before every persistent save.
+		state = mergeDelegationRouting(state, s.delegation)
+		if state.Phase == rootfsstate.PhaseCreated {
+			state.FormatVersion = rootfsstate.FormatDelegationV1
+		}
+	} else {
+		state = mergeDelegationState(state, s.delegation)
+	}
+	return s.store.Save(runtimeRoot, containerID, state)
 }
 
-func (s nestedDelegationStateStore) Remove(runtimeRoot, containerID string) error {
+func (s delegationStateStore) Remove(runtimeRoot, containerID string) error {
 	return s.store.Remove(runtimeRoot, containerID)
 }
 
@@ -366,6 +376,12 @@ func (w Wrapper) runCutoverCleanup(ctx context.Context, args, env []string, inv 
 	if err != nil || state.DelegateBinary == "" {
 		return fmt.Errorf("delegation_state_missing")
 	}
+	if state.RuntimeType == config.RunscRuntimeType && state.RootfsEnabled && state.LeaseID != "" {
+		if state.MergedDir == "" {
+			return fmt.Errorf("runsc persistent rootfs state has no merged directory")
+		}
+		return w.runFlatDelete(ctx, state.DelegateBinary, args, env, state)
+	}
 	return w.legacyDelegateWrapper(state.DelegateBinary).Run(ctx, "rootfs-runtime-wrapper", args, env)
 }
 
@@ -397,8 +413,13 @@ func (w Wrapper) runCutoverCreate(ctx context.Context, wrapperName string, args,
 	if err != nil {
 		return err
 	}
-	if adapter.RuntimeType != config.RuncV2RuntimeType {
+	if !config.IsOCIRuntimeType(adapter.RuntimeType) {
 		return fmt.Errorf("OCI wrapper cannot delegate task shim %q", adapter.RuntimeType)
+	}
+	if adapter.RuntimeType == config.RunscRuntimeType && ShouldMountPersistentRootfs(spec) {
+		if err := validateRunscCreate(w.Config, spec, args); err != nil {
+			return err
+		}
 	}
 	delegation := newDelegationState(inv.ContainerID, adapterID, adapter, ShouldMountPersistentRootfs(spec))
 	if err := w.stateStore().Save(w.Config.RuntimeRoot, inv.ContainerID, delegation); err != nil {
@@ -470,8 +491,8 @@ func newDelegationState(containerID, adapterID string, adapter ResolvedRuntimeAd
 
 func (w Wrapper) runCutoverRootfs(ctx context.Context, request cutoverRootfsRequest) error {
 	legacy := w.legacyDelegateWrapper(request.adapter.DelegateBinary)
+	legacy.RuntimeStateStore = delegationStateStore{store: w.stateStore(), delegation: request.delegation}
 	if legacy.Config.OverlayMode != OverlayModeFlatLowerdirs {
-		legacy.RuntimeStateStore = nestedDelegationStateStore{store: w.stateStore(), delegation: request.delegation}
 		return legacy.Run(ctx, "rootfs-runtime-wrapper", request.args, request.env)
 	}
 	if err := legacy.Run(ctx, "rootfs-runtime-wrapper", request.args, request.env); err != nil {
@@ -487,6 +508,11 @@ func (w Wrapper) runCutoverRootfs(ctx context.Context, request cutoverRootfsRequ
 // mergeDelegationState 保留 Overlay 生命周期字段，并用本次已校验的 adapter 证据覆盖路由字段。
 func mergeDelegationState(state, delegation rootfsstate.State) rootfsstate.State {
 	state.FormatVersion = rootfsstate.FormatDelegationV1
+	state.Phase = rootfsstate.PhaseCreated
+	return mergeDelegationRouting(state, delegation)
+}
+
+func mergeDelegationRouting(state, delegation rootfsstate.State) rootfsstate.State {
 	state.RuntimeAdapterID = delegation.RuntimeAdapterID
 	state.RuntimeAdapterMode = delegation.RuntimeAdapterMode
 	state.SourceHandler = delegation.SourceHandler
@@ -496,7 +522,6 @@ func mergeDelegationState(state, delegation rootfsstate.State) rootfsstate.State
 	state.ClusterAdapterDigest = delegation.ClusterAdapterDigest
 	state.NodeResolvedDigest = delegation.NodeResolvedDigest
 	state.RootfsEnabled = delegation.RootfsEnabled
-	state.Phase = rootfsstate.PhaseCreated
 	return state
 }
 
@@ -509,15 +534,24 @@ func (w Wrapper) legacyDelegateWrapper(delegate string) Wrapper {
 	return legacy
 }
 
-// runFlatDelete 按“标记删除 -> 卸载 -> 确认卸载 -> 删除 runtime -> 释放租约”的顺序执行。
+// runFlatDelete normally unmounts before runtime deletion; runsc first closes
+// its gofer, then unmounts and verifies the rootfs before releasing the lease.
 // 若任一步失败即停止，避免在挂载仍存在时解除 upperdir 的独占锁。
 func (w Wrapper) runFlatDelete(ctx context.Context, delegate string, args, env []string, state rootfsstate.State) error {
-	if w.NormalUnmounter == nil || w.UnmountVerifier == nil || w.CommandRunner == nil || w.Rootfs == nil {
-		return fmt.Errorf("flat rootfs delete dependencies are required")
+	state, err := w.prepareFlatDelete(state, args)
+	if err != nil {
+		return err
 	}
-	state.Phase = rootfsstate.PhaseDeleting
 	if err := w.stateStore().Save(w.Config.RuntimeRoot, state.ContainerID, state); err != nil {
 		return err
+	}
+	if state.DelegateBinary != "" {
+		delegate = state.DelegateBinary
+	}
+	if state.RuntimeType == config.RunscRuntimeType {
+		if err := w.cleanRunsc(ctx, delegate, state, state.DeleteArgs, env); err != nil {
+			return err
+		}
 	}
 	if err := w.NormalUnmounter.UnmountNormal(state.MergedDir); err != nil {
 		return fmt.Errorf("normal unmount persistent rootfs: %w", err)
@@ -525,11 +559,10 @@ func (w Wrapper) runFlatDelete(ctx context.Context, delegate string, args, env [
 	if err := w.UnmountVerifier.ConfirmUnmounted(state.MergedDir); err != nil {
 		return err
 	}
-	if state.DelegateBinary != "" {
-		delegate = state.DelegateBinary
-	}
-	if err := w.CommandRunner.Run(ctx, delegate, args, env); err != nil {
-		return fmt.Errorf("delegate delete: %w", err)
+	if state.RuntimeType != config.RunscRuntimeType {
+		if err := w.CommandRunner.Run(ctx, delegate, args, env); err != nil {
+			return fmt.Errorf("delegate delete: %w", err)
+		}
 	}
 	released, err := w.Rootfs.ReleaseRootfs(ctx, apiv1alpha1.ReleaseRootfsRequest{LeaseID: state.LeaseID, ContainerID: state.ContainerID})
 	if err != nil {
@@ -542,6 +575,30 @@ func (w Wrapper) runFlatDelete(ctx context.Context, delegate string, args, env [
 		return err
 	}
 	return nil
+}
+
+// prepareFlatDelete pins validated runsc delete arguments before any runtime or
+// mount side effects, so recovery uses the same root even for legacy states.
+func (w Wrapper) prepareFlatDelete(state rootfsstate.State, args []string) (rootfsstate.State, error) {
+	if w.NormalUnmounter == nil || w.UnmountVerifier == nil || w.Rootfs == nil {
+		return state, fmt.Errorf("flat rootfs delete dependencies are required")
+	}
+	if state.RuntimeType == config.RunscRuntimeType {
+		if w.RuntimeCleaner == nil {
+			return state, fmt.Errorf("partial runtime cleaner is required")
+		}
+		deleteArgs, err := runscDeleteArgs(state, args)
+		if err != nil {
+			return state, err
+		}
+		state.DeleteArgs = deleteArgs
+	} else {
+		if w.CommandRunner == nil {
+			return state, fmt.Errorf("flat rootfs delete command runner is required")
+		}
+	}
+	state.Phase = rootfsstate.PhaseDeleting
+	return state, nil
 }
 
 // runFlatCreate 以 containerd 的只读快照链为下层、PVC 为写层创建 Flat Overlay，
