@@ -79,8 +79,14 @@ func loadContainerdImports(path, hostRoot string, stack map[string]bool, depth i
 			if err != nil {
 				return nil, nil, err
 			}
-			// Discovery only needs runtime plugin fields. Keep the entry point
-			// identity and imports rather than projecting an imported root/state.
+			// containerd uses the last nonzero imported version. GPU Operator
+			// can upgrade a v2 entry point with a v3 NVIDIA drop-in; in that
+			// case the old CRI runtime table is inactive, not a second runtime.
+			if version, ok := extra["version"].(int64); ok && version != 0 {
+				raw["version"] = version
+			}
+			// Keep the entry point identity and imports rather than projecting
+			// an imported root/state into the configuration we inspect.
 			for _, key := range []string{"version", "root", "state", "imports"} {
 				delete(extra, key)
 			}

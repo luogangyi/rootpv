@@ -24,9 +24,11 @@ func TestMountInfoCrossCheckContainerdFixtures(t *testing.T) {
 	tests := []struct {
 		name       string
 		lowerCount int
+		compact    bool
 	}{
 		{name: "containerd 1.6.28 single lower", lowerCount: 1},
 		{name: "containerd 2.1.1 multiple lowers", lowerCount: 3},
+		{name: "containerd compacted GPU image", lowerCount: 70, compact: true},
 	}
 
 	for _, tt := range tests {
@@ -38,6 +40,11 @@ func TestMountInfoCrossCheckContainerdFixtures(t *testing.T) {
 				t.Fatal(err)
 			}
 			fixture := overlayMountInfoLine(target, source)
+			if tt.compact {
+				for _, path := range source.LowerDirs {
+					fixture = strings.ReplaceAll(fixture, mountInfoEscape(path), filepath.Base(filepath.Dir(path))+"/fs")
+				}
+			}
 
 			got, err := InspectAndValidateSourceOverlay(strings.NewReader(fixture), target, source, []string{root})
 			if err != nil {
@@ -120,6 +127,16 @@ func TestMountInfoRejectsInvalidOptionsAndFilesystem(t *testing.T) {
 			fixture: strings.TrimSpace(overlayMountInfoLine(target, source)) +
 				",upperdir=" + mountInfoEscape(filepath.Join(root, "other", "fs")) + "\n",
 			wantReason: "source_overlay_options_invalid",
+		},
+		{
+			name:       "relative traversal",
+			fixture:    strings.ReplaceAll(overlayMountInfoLine(target, source), mountInfoEscape(source.LowerDirs[0]), "1/../1/fs"),
+			wantReason: "source_overlay_options_invalid",
+		},
+		{
+			name:       "compacted snapshot mismatch",
+			fixture:    strings.ReplaceAll(overlayMountInfoLine(target, source), mountInfoEscape(source.LowerDirs[0]), "2/fs"),
+			wantReason: "source_mount_api_mismatch",
 		},
 	}
 

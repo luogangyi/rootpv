@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/containerd/containerd/mount"
 )
 
 func (SyscallOverlayMounter) MountOverlay(lower, upper, work, merged string, extraOptions []string) error {
@@ -75,9 +77,12 @@ func (SyscallNormalUnmounter) UnmountNormal(path string) error {
 	return normalUnmountWith(syscall.Unmount, path)
 }
 
-// mountOverlay 是 Flat Overlay 的系统调用边界；调用方的挂载标志固定为零。
+// Use containerd's lowerdir compaction for large GPU/AI images whose absolute
+// layer paths exceed mount(2)'s one-page argument limit. It changes cwd only
+// on a private OS thread, keeping the wrapper's other goroutines unaffected.
 func mountOverlay(source, target, fsType, data string) error {
-	return syscall.Mount(source, target, fsType, 0, data)
+	m := mount.Mount{Source: source, Type: fsType, Options: strings.Split(data, ",")}
+	return m.Mount(target)
 }
 
 func requireSameFilesystem(upper, work string) error {

@@ -1,6 +1,6 @@
 # RootPV 集群 E2E 测试
 
-本目录包含已部署 RootPV 集群的功能与性能脚本，以及 Kata + QEMU、gVisor 的完整手工测试清单。
+本目录包含已部署 RootPV 集群的功能与性能脚本，以及 Kata + QEMU、gVisor、NVIDIA 的完整手工测试清单。
 脚本通过 SSH 在控制面执行 kubectl，开发机无需保存 kubeconfig。
 测试记录按运行时、存储和版本组合分别解释，不能由一个组合推导全部 runtime 支持。
 
@@ -78,6 +78,14 @@ app 和 sidecar。把模板节点与镜像替换为实际值，在目标节点�
 local PV 为 Retain，删除 Namespace/PV 不会删除节点上的测试数据。
 这份可复用清单已检查 YAML 和容器脚本语法；历史集群验证对应的精确组合和用例见
 [2026-10-14 Kata 结果](results/kata-qemu-2026-10-14.md)。
+
+## NVIDIA GPU 测试
+
+[manifests/nvidia.yaml](manifests/nvidia.yaml) 使用静态 local PV、一个 GPU app 和未申请 GPU 的 sidecar。
+替换节点和镜像后，按 [NVIDIA 指南](../../docs/user-guide/nvidia.md) 检查 GPU 可见性和持久化重建。
+完整验收还应包含 CUDA 实算、GPU 重新分配、设备隔离与删除清理。CDI/legacy、驱动版本、MIG/vGPU
+分别记录结果；无 MIG 硬件时明确标为未验证。现有通用功能脚本不会自动申请 GPU，不能替代此专项测试。
+已完成的组合与边界见 [2026-11-08 NVIDIA 结果](results/nvidia-2026-11-08.md)。
 
 ## 性能测试与比较范围
 

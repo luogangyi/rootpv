@@ -1,5 +1,11 @@
 # RootPV Runtime Adapter 自动发现与配置生成设计
 
+> **2026-11-08 更新：** NVIDIA 沿用 runc-v2 adapter，不增加厂商设备解析分支。
+> GPU Operator 导入 v3 配置时仅使用生效的 v3 CRI runtime 表；设备仍由 device plugin 与 Toolkit/CDI 注入。
+> 镜像快照支持 containerd 的长 lowerdir 压缩表示，并继续逐层核对快照来源。
+> 空 catalog 经 YAML 往返后保持 generation 稳定，避免配置空窗反复触发重载。
+> 驱动与 MIG 边界见 [NVIDIA 指南](../user-guide/nvidia.md)，证据见 [兼容性矩阵](04-compatibility-validation-plan.md)。
+
 > **2026-10-20 更新：** 已增加 [gVisor runsc adapter](06-gvisor-runsc-runtime-adapter-design.md)。
 > io.containerd.runsc.v1 通过 shim TOML 的 binary_name 接入 OCI wrapper，生成配置关闭内部临时 overlay。
 > 下文关于旧实现拒绝 gVisor 的叙述保留历史语境；当前能力以新设计和兼容性矩阵为准。

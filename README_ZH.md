@@ -43,6 +43,7 @@ RootPV 仅使用 Kubernetes、containerd、OCI runtime-spec 和 Linux VFS 的公
 - 严格校验基础镜像身份，防止将已有可写层意外复用到不兼容镜像。
 - 基于 `io.containerd.runc.v2` 的 runtime adapter；节点已正确安装且可发现的设备专用 runtime 也可接入。
 - gVisor io.containerd.runsc.v1 通过独立 shim 配置接入，见 [gVisor 指南](docs/user-guide/gvisor.md)。
+- NVIDIA runc-v2 adapter 保留 CDI 或原厂 runtime 的 GPU 注入；驱动与 MIG 边界见 [NVIDIA 指南](docs/user-guide/nvidia.md)。
 - Kata + QEMU task-shim adapter；源 handler 需显式配置 `runtime_path` 和 QEMU `ConfigPath`，见 [Kata 使用指南](docs/user-guide/kata-qemu.md)。
 
 当前范围不包括：非 containerd 运行时、非 `overlayfs` snapshotter、rootless 或非特权节点安装、一个根文件系统的读写共享、跨镜像链自动 Reset/Rebase，以及将可写层自动转换为 OCI 镜像。
@@ -57,6 +58,11 @@ Kata + QEMU 的限定功能验证组合为 Kubernetes 1.34.3、containerd 2.1.1�
 QEMU 11.0.1 和 ext4 local RWO PVC，已覆盖持久化、sidecar、单写互斥、rootfsd 重启与正常删除。
 动态 CSI PVC、节点/VM 故障恢复和性能尚未验证，不能由该功能结果推导；见
 [验证记录](tests/e2e/results/kata-qemu-2026-10-14.md)。
+
+NVIDIA GPU 已在 RTX 5090、驱动 610.57.04、Toolkit 1.19.1 和 ext4 local RWO PVC 上验证。
+CDI 与 legacy envvar 分配均通过 GPU 实算、三代持久化重建、sidecar 隔离、单写互斥和清理；
+恢复 CDI 后同一 PVC 的文件仍然保留。其他驱动版本、驱动升级与 MIG 需单独验证，见
+[NVIDIA 验证记录](tests/e2e/results/nvidia-2026-11-08.md)。
 
 不支持将运行中的 containerd 2.1 状态直接降级为 1.6：候选 1.6.28 可以启动，但不能重用 2.1 的运行时
 状态。跨大版本回退应在排空节点后按受控迁移流程重建运行时状态。当前 Helm 卸载会停止 RootPV 节点代理，
@@ -77,7 +83,8 @@ QEMU 11.0.1 和 ext4 local RWO PVC，已覆盖持久化、sidecar、单写互斥
 | CPU 架构与内核 | linux/arm64 及其他受支持 Linux 内核/发行版组合 | — | 基线用例与 OverlayFS 恢复覆盖 |
 | 存储 | XFS 的 RWO 块存储 PVC | — | OverlayFS 挂载、持久化和清理覆盖 |
 | runc-v2 adapter | `BinaryName` delegate 非 wrapper 的自定义 `io.containerd.runc.v2` runtime | — | adapter 发现、生命周期、信号、退出码和恢复 |
-| GPU runtime | NVIDIA（环境具备时分别覆盖 MIG/vGPU）、AMD ROCm、Intel 和 MThreads | — | 设备工作负载、持久化、清理和各设备切分形态 |
+| NVIDIA GPU | RTX 5090；驱动 610.57.04；Toolkit 1.19.1；containerd 2.1.1；ext4 local PVC | [CDI 与 legacy envvar 分配、GPU 实算、三代持久化、sidecar 隔离与清理](tests/e2e/results/nvidia-2026-11-08.md) | 其他驱动与驱动升级；MIG/vGPU/time-slicing；GDS/GDRCopy/MOFED；动态 CSI；性能 |
+| 其他 GPU runtime | AMD ROCm、Intel 和 MThreads | — | 设备工作负载、持久化、清理和各设备切分形态 |
 | NPU runtime | Ascend 及其他 runc-v2 兼容加速器；整卡和虚拟/切分形态分别记录 | — | 厂商工作负载、持久化、清理和隔离 |
 | Kata + QEMU | Linux AMD64；Kubernetes 1.34.3；containerd 2.1.1；Kata 4.2.0 Rust；QEMU 11.0.1；ext4 local RWO PVC | [持久化、sidecar 隔离、单写互斥、rootfsd 重启、普通 Kata 与清理](tests/e2e/results/kata-qemu-2026-10-14.md) | 动态 CSI PVC、节点/VM 故障恢复、性能与设备 |
 | gVisor | Linux AMD64；Kubernetes 1.37.1；containerd 2.1.1；runsc 20261012.0；systrap；ext4 local RWO PVC | [在线 Webhook/catalog、三代持久化、sidecar、单写者互斥、rootfsd 重启与 shim 自动退出](tests/e2e/results/gvisor-online-2026-10-20.md) | 动态 CSI、性能、设备、checkpoint、Webhook/配置中断恢复及节点/Sentry/gofer 故障恢复 |
@@ -319,6 +326,24 @@ Kata 性能尚未测量：
 TypeUrl/ConfigPath，配置中提供绝对 binary_name；生成的独立 shim 配置设置 overlay2=none，
 原配置保持原状。详见 [使用指南](docs/user-guide/gvisor.md)和 [完整测试 YAML](tests/e2e/manifests/gvisor.yaml)。
 原生 shim 全局启动配置必须 grouping=true，仅在 handler ConfigPath 设置不够。
+
+### NVIDIA GPU 工作负载
+
+先验证同一镜像和资源请求的普通 GPU Pod，再添加 RootPV 注解并沿用可用的源 RuntimeClass，
+例如 `nvidia`。containerd 原生 CDI 也可使用节点默认 adapter。GPU 仍由 device plugin 分配，
+Pod 重建可能得到不同设备，但保留 PVC 中的文件。
+
+[完整 local PV 测试 YAML](tests/e2e/manifests/nvidia.yaml) 包含 PV、PVC、GPU app 和普通 sidecar。
+替换节点名、创建本地 PV 目录，并选择与 GPU/驱动匹配的镜像后执行：
+
+```bash
+kubectl apply -f tests/e2e/manifests/nvidia.yaml
+kubectl -n rootpv-test-nvidia wait --for=condition=Ready pod/nvidia-rootpv-test --timeout=180s
+kubectl -n rootpv-test-nvidia logs nvidia-rootpv-test -c app
+```
+
+删除并重新创建 Pod 后，marker 应保持不变、计数递增。MIG 需使用 device plugin 实际公布的资源键；
+当前实机验证覆盖整卡。CDI/legacy 配置、驱动升级及 MIG 注意事项见 [NVIDIA 指南](docs/user-guide/nvidia.md)。
 
 ## 开发
 

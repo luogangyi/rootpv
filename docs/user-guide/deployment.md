@@ -169,3 +169,11 @@ runtimeClassName: gvisor。要求 flat-lowerdirs，详见 [gVisor 指南](gvisor
 仅做手工隔离测试时，node-agent 可同时设置 --runtime-adapter-discovery=false 与
 --publish-node-capabilities=false，避免自动改写 handler、registry 或节点标签；
 这不构成正常自动发现安装路径，需要测试者预先准备路由和准入结果。默认仍启用 capability 发布。
+
+## NVIDIA GPU 接入
+
+先安装匹配的驱动、NVIDIA Container Toolkit 和 device plugin，验证普通 GPU Pod 能完成计算。
+沿用原 `runtimeClassName: nvidia` 或已配置的模式专用 RuntimeClass，申请 GPU 资源并添加 RootPV 注解；
+containerd 原生 CDI 也可使用节点默认 adapter。RootPV 保留设备分配与注入，不安装驱动或修改 MIG 切分。
+接入步骤、CDI/legacy 区别、自定义节点路径和驱动升级边界见 [NVIDIA 指南](nvidia.md)，
+整卡实测结果见 [验证记录](../../tests/e2e/results/nvidia-2026-11-08.md)。

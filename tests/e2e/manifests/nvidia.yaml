@@ -1,0 +1,112 @@
+# Prerequisites: a working NVIDIA RuntimeClass/device plugin and RootPV catalog.
+# Replace rootpv-gpu-worker with your node, create the local directory there,
+# and choose a CUDA image compatible with that GPU and its installed driver.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rootpv-test-nvidia
+  labels:
+    openfuyao.cn/rootpv-nvidia-test: "true"
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rootpv-test-nvidia-pv
+spec:
+  capacity:
+    storage: 10Gi
+  volumeMode: Filesystem
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: rootpv-local
+  claimRef:
+    namespace: rootpv-test-nvidia
+    name: rootfs-data
+  local:
+    path: /var/lib/rootpv/nvidia-test-data
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values: [rootpv-gpu-worker]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rootfs-data
+  namespace: rootpv-test-nvidia
+spec:
+  volumeName: rootpv-test-nvidia-pv
+  storageClassName: rootpv-local
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nvidia-rootpv-test
+  namespace: rootpv-test-nvidia
+  annotations:
+    openfuyao.cn/persistent-rootfs: "true"
+    openfuyao.cn/rootfs-container: app
+    openfuyao.cn/rootfs-volume: rootfs-data
+    openfuyao.cn/rootfs-path: nvidia-test/app
+    openfuyao.cn/rootfs-base-image-policy: Strict
+spec:
+  runtimeClassName: nvidia
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 5
+  nodeSelector:
+    kubernetes.io/hostname: rootpv-gpu-worker
+  containers:
+    - name: app
+      image: nvidia/cuda:13.0.0-base-ubuntu22.04
+      imagePullPolicy: IfNotPresent
+      resources:
+        limits:
+          # MIG mixed strategy: replace with the resource advertised by the
+          # device plugin, e.g. nvidia.com/mig-1g.5gb: 1. Do not request both.
+          nvidia.com/gpu: 1
+      env:
+        - name: POD_UID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.uid
+      command:
+        - /bin/sh
+        - -ec
+        - |
+          nvidia-smi -L
+          test -f /rootpv-nvidia.marker || printf '%s\n' "$POD_UID" > /rootpv-nvidia.marker
+          count=0
+          test ! -f /rootpv-nvidia.count || count=$(cat /rootpv-nvidia.count)
+          printf '%s\n' "$((count + 1))" > /rootpv-nvidia.count
+          sync
+          cat /rootpv-nvidia.marker /rootpv-nvidia.count
+          exec sleep 86400
+      readinessProbe:
+        exec:
+          command: [/bin/sh, -ec, "test -s /rootpv-nvidia.count && nvidia-smi -L"]
+        periodSeconds: 5
+    - name: sidecar
+      image: busybox:1.37
+      env:
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: void
+      command:
+        - /bin/sh
+        - -ec
+        - |
+          test ! -e /rootpv-nvidia.marker
+          test ! -e /rootpv-sidecar.marker
+          test ! -e /dev/nvidiactl
+          echo fresh > /rootpv-sidecar.marker
+          exec sleep 86400
+  volumes:
+    - name: rootfs-data
+      persistentVolumeClaim:
+        claimName: rootfs-data

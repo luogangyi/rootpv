@@ -117,3 +117,12 @@ overlay2=none，原配置不改写。使用 runtimeClassName: gvisor；详见
 [gVisor 指南](../../docs/user-guide/gvisor.md)和 [完整测试清单](../../tests/e2e/manifests/gvisor.yaml)。
 Chart 渲染的专用在线部署已验证真实准入、catalog 和 shim 自动退出，见
 [限定组合记录](../../tests/e2e/results/gvisor-online-2026-10-20.md)。
+
+## NVIDIA GPU
+
+Chart 沿用自动发现的 runc-v2 NVIDIA handler，保留原 `BinaryName` 委托和设备注入配置。
+节点须先安装驱动、Toolkit 和 device plugin，并验证普通 GPU Pod；Chart 不安装或切换这些组件。
+GPU Operator 的 v3 导入配置按生效 CRI 表发现。节点使用自定义 containerd/kubelet 目录时，
+同步配置 hostPaths、`kubeletRoot`、`allowedOverlaySnapshotRoots`，并确保容器内可访问原始绝对快照路径。
+CDI/legacy、驱动与 MIG 要求见 [NVIDIA 指南](../../docs/user-guide/nvidia.md)，
+可复用 [local PV 测试清单](../../tests/e2e/manifests/nvidia.yaml)。

@@ -46,6 +46,48 @@ func TestContainerdImportsInitializeNilStack(t *testing.T) {
 	}
 }
 
+func TestNvidiaV3ImportIgnoresInactiveV2Runtime(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "config.toml")
+	writeExecutable(t, root, "usr/local/nvidia/toolkit/nvidia-container-runtime")
+	writeRuntimeConfigFile(t, path, []byte(`version = 2
+imports = ['nvidia.toml']
+[plugins.'io.containerd.grpc.v1.cri'.containerd]
+default_runtime_name = 'obsolete'
+[plugins.'io.containerd.grpc.v1.cri'.containerd.runtimes.obsolete]
+runtime_type = 'io.containerd.runc.v2'
+`))
+	writeRuntimeConfigFile(t, filepath.Join(root, "nvidia.toml"), []byte(`version = 3
+[plugins.'io.containerd.cri.v1.runtime'.containerd]
+default_runtime_name = 'nvidia'
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.nvidia]
+runtime_type = 'io.containerd.runc.v2'
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.nvidia.options]
+BinaryName = '/usr/local/nvidia/toolkit/nvidia-container-runtime'
+`))
+	inventory, err := DiscoverRuntimeInventory(path, RuntimeDiscoveryOptions{HostRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inventory.DefaultHandler != "nvidia" || len(inventory.Handlers) != 1 {
+		t.Fatalf("inactive handler discovered: %#v", inventory)
+	}
+	if handler := inventory.Handlers[0]; !handler.Resolved || handler.AdapterID != "nvidia-runc-v2" {
+		t.Fatalf("NVIDIA handler unresolved: %#v", handler)
+	}
+	raw, _, err := loadContainerdConfig(path, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plugin, err := adapterRuntimePlugin(raw, "nvidia")
+	if err != nil || plugin != "io.containerd.cri.v1.runtime" {
+		t.Fatalf("NVIDIA installation plugin: %s %v", plugin, err)
+	}
+	if _, err := adapterRuntimePlugin(raw, "obsolete"); err == nil {
+		t.Fatal("inactive legacy handler selected for installation")
+	}
+}
+
 func TestMergeConfigInitializesNilDestination(t *testing.T) {
 	for _, dst := range []map[string]any{nil, {"plugins": map[string]any(nil)}} {
 		src := map[string]any{"plugins": map[string]any{"runtime": "kata"}}
