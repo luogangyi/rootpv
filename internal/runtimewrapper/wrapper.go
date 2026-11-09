@@ -376,9 +376,11 @@ func (w Wrapper) runCutoverCleanup(ctx context.Context, args, env []string, inv 
 	if err != nil || state.DelegateBinary == "" {
 		return fmt.Errorf("delegation_state_missing")
 	}
-	if state.RuntimeType == config.RunscRuntimeType && state.RootfsEnabled && state.LeaseID != "" {
+	// Flat creates retain their lease when promoted to delegation state. Every
+	// adapter must confirm unmount before release; Nested states have no lease.
+	if state.RootfsEnabled && state.LeaseID != "" {
 		if state.MergedDir == "" {
-			return fmt.Errorf("runsc persistent rootfs state has no merged directory")
+			return fmt.Errorf("persistent rootfs state has no merged directory")
 		}
 		return w.runFlatDelete(ctx, state.DelegateBinary, args, env, state)
 	}
@@ -422,10 +424,14 @@ func (w Wrapper) runCutoverCreate(ctx context.Context, wrapperName string, args,
 		}
 	}
 	delegation := newDelegationState(inv.ContainerID, adapterID, adapter, ShouldMountPersistentRootfs(spec))
-	if err := w.stateStore().Save(w.Config.RuntimeRoot, inv.ContainerID, delegation); err != nil {
-		return err
+	// Flat creates persist routing together with the acquired lease, before
+	// mounting. A rejected resolve must not leave an unrecoverable placeholder.
+	if !delegation.RootfsEnabled || w.Config.OverlayMode != OverlayModeFlatLowerdirs {
+		if err := w.stateStore().Save(w.Config.RuntimeRoot, inv.ContainerID, delegation); err != nil {
+			return err
+		}
 	}
-	if !ShouldMountPersistentRootfs(spec) {
+	if !delegation.RootfsEnabled {
 		return w.exec(adapter.DelegateBinary, args, env)
 	}
 	return w.runCutoverRootfs(ctx, cutoverRootfsRequest{args: args, env: env, inv: inv, delegation: delegation, adapter: adapter})

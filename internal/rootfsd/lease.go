@@ -258,6 +258,13 @@ func (m *LeaseManager) isHeld(leaseID string) bool {
 	return m.held[leaseID] != nil
 }
 
+func (m *LeaseManager) isReleased(leaseID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, released := m.released[leaseID]
+	return released
+}
+
 func acquireRecoveryLock(state rootfsstate.State) (*recoveryLock, error) {
 	file, err := os.OpenFile(filepath.Join(state.MetaDir, "lease.lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {

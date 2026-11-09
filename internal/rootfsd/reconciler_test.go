@@ -48,7 +48,7 @@ func TestReconcilerReacquiresCreatedLeaseBeforeSuccess(t *testing.T) {
 	}
 }
 
-func TestReconcilerCleansStoppedDelegatedRootfs(t *testing.T) {
+func TestReconcilerCleansUntrackedDelegatedRootfs(t *testing.T) {
 	runtimeRoot, old, state := prepareDelegatedRecoveryState(t)
 	abandonLease(t, old, state.LeaseID)
 
@@ -56,16 +56,16 @@ func TestReconcilerCleansStoppedDelegatedRootfs(t *testing.T) {
 	assertDelegatedStateCleaned(t, runtimeRoot, state, cleaner)
 }
 
-func TestReconcilerRetainsRunningDelegatedRootfs(t *testing.T) {
+func TestReconcilerRetainsTrackedDelegatedRootfs(t *testing.T) {
 	runtimeRoot, old, state := prepareDelegatedRecoveryState(t)
 	abandonLease(t, old, state.LeaseID)
 
-	cleaner := reconcileDelegatedState(t, runtimeRoot, fakeRuntimeStateChecker{running: true})
+	cleaner := reconcileDelegatedState(t, runtimeRoot, fakeRuntimeStateChecker{present: true})
 	if cleaner.calls != 0 {
-		t.Fatalf("running delegated rootfs was cleaned")
+		t.Fatalf("tracked delegated rootfs was cleaned")
 	}
 	if _, err := os.Stat(rootfsstate.Path(runtimeRoot, state.ContainerID)); err != nil {
-		t.Fatalf("running delegated state was removed: %v", err)
+		t.Fatalf("tracked delegated state was removed: %v", err)
 	}
 }
 
@@ -139,6 +139,29 @@ func TestReconcilerCleanupFailureKeepsBarrierClosed(t *testing.T) {
 	}
 	if _, err := os.Stat(rootfsstate.Path(runtimeRoot, "container-id")); err != nil {
 		t.Fatalf("uncertain state should remain: %v", err)
+	}
+}
+
+func TestReconcilerSkipsLeaseReleasedDuringTaskLookup(t *testing.T) {
+	runtimeRoot, leases, state := prepareDelegatedRecoveryState(t)
+	cleaner := &fakeRecoveryCleaner{err: errors.New("original namespace is gone")}
+	reconciler := Reconciler{
+		RuntimeRoot: runtimeRoot, Leases: leases, Cleaner: cleaner,
+		Runtime: fakeRuntimeStateChecker{check: func() {
+			// The shim completes delete after the recovery snapshot was read.
+			if _, err := leases.Release(context.Background(), state.LeaseID); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	if err := reconciler.Reconcile(context.Background()); err != nil {
+		t.Fatalf("completed delete caused recovery failure: %v", err)
+	}
+	if _, err := os.Stat(rootfsstate.Path(runtimeRoot, state.ContainerID)); !os.IsNotExist(err) {
+		t.Fatalf("completed state remains: %v", err)
+	}
+	if cleaner.calls != 0 {
+		t.Fatal("cleaned a runtime whose lease was already released")
 	}
 }
 
@@ -287,12 +310,16 @@ type fakeProcessChecker struct {
 }
 
 type fakeRuntimeStateChecker struct {
-	running bool
+	present bool
 	err     error
+	check   func()
 }
 
-func (c fakeRuntimeStateChecker) Running(context.Context, rootfsstate.State) (bool, error) {
-	return c.running, c.err
+func (c fakeRuntimeStateChecker) Present(context.Context, rootfsstate.State) (bool, error) {
+	if c.check != nil {
+		c.check()
+	}
+	return c.present, c.err
 }
 
 func (c fakeProcessChecker) Alive(identity rootfsstate.ProcessIdentity) bool {
@@ -457,6 +484,21 @@ func TestKataRecoveryRetainsLeaseWhileEitherShimOwnerLives(t *testing.T) {
 	retained, err := retainRecoveredState(context.Background(), state, fakeProcessChecker{}, fakeRuntimeStateChecker{})
 	if err != nil || retained {
 		t.Fatalf("dead Kata owners retained forever: %v %v", retained, err)
+	}
+}
+
+func TestRecoveryRetainsCreateWrapperDuringHandoff(t *testing.T) {
+	owner := rootfsstate.ProcessIdentity{PID: 1, StartTime: 11}
+	states := []rootfsstate.State{
+		{FormatVersion: rootfsstate.FormatFlatV1, Phase: rootfsstate.PhaseCreatingRegistered, Wrapper: owner},
+		{FormatVersion: rootfsstate.FormatDelegationV1, Phase: rootfsstate.PhaseCreated, Wrapper: owner, RootfsEnabled: true},
+	}
+	for _, state := range states {
+		processes := fakeProcessChecker{alive: map[rootfsstate.ProcessIdentity]bool{owner: true}}
+		retained, err := retainRecoveredState(context.Background(), state, processes, fakeRuntimeStateChecker{})
+		if err != nil || !retained {
+			t.Fatalf("active create wrapper lost its %s state: %v", state.Phase, err)
+		}
 	}
 }
 
