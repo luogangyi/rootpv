@@ -198,6 +198,8 @@ func criRuntimeTables(raw map[string]any) []map[string]any {
 }
 
 func activeCRIRuntimePlugins(raw map[string]any) []string {
+	// This mapping supports config versions only through v3. Future versions
+	// need explicit migration review; do not assume v3 semantics with >= 3.
 	// Version 3 does not migrate the legacy io.containerd.grpc.v1.cri
 	// runtime settings. Leave them on disk, but never discover their handlers.
 	if raw["version"] == int64(3) {

@@ -16,7 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"slices"
+	"reflect"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -242,8 +242,18 @@ func AdapterReadinessValue(digest string) string {
 
 func sameCatalog(a, b config.RuntimeCatalog) bool {
 	// YAML encodes nil slices as []; both represent the same empty catalog.
-	return a.FormatVersion == b.FormatVersion &&
-		slices.Equal(a.Adapters, b.Adapters) && slices.Equal(a.Routes, b.Routes)
+	// Normalize local copies, then compare all fields so schema additions
+	// cannot silently bypass generation updates.
+	for _, catalog := range []*config.RuntimeCatalog{&a, &b} {
+		catalog.Generation = 0
+		if len(catalog.Adapters) == 0 {
+			catalog.Adapters = nil
+		}
+		if len(catalog.Routes) == 0 {
+			catalog.Routes = nil
+		}
+	}
+	return reflect.DeepEqual(a, b)
 }
 
 func mergeStringMap(base, extra map[string]string) map[string]string {
