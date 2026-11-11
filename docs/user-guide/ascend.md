@@ -9,7 +9,7 @@ device plugin 分配 NPU，原厂 runtime/hook 注入设备和驱动，RootPV �
 
 1. 安装适配硬件的驱动、Ascend Docker Runtime 和 device plugin，使用包含 A3 算子包的兼容 CANN 镜像。
 2. 先用同一镜像、资源请求和源 RuntimeClass 验证普通 Pod 的实际 NPU 计算。
-3. 使用当前 Helm Chart 的自动发现/catalog、`overlayfs` 和支持 OverlayFS 的 Filesystem PVC。
+3. 使用当前 Helm Chart 或 `deploy/manifests` 的自动发现/catalog、`overlayfs` 和支持 OverlayFS 的 Filesystem PVC。
    ARM64 节点须部署 ARM64 或多架构 RootPV 镜像，并按部署指南设置节点安装标签。
 4. 在业务 Pod 中保留 `runtimeClassName: ascend`，添加标准 RootPV 注解与 PVC。
    Webhook 自动改为 `persistent-rootfs-ascend`，shadow handler 委托原厂二进制。
@@ -47,6 +47,32 @@ device plugin 7.3.0 根据自身环境中的 `ASCEND_DOCKER_RUNTIME=True` 判断
 注入设备，仅设置 `useAscendDocker=true` 不够。默认 runtime 保持 `runc` 时，应让 device plugin
 自身使用 `runtimeClassName: ascend`，确认日志显示采用 Ascend runtime 分配模式。
 该环境标记由原厂 runtime 注入，不应手工伪造来跳过部署检查。
+
+## RootPV 如何接入 Ascend
+
+配置内容需要适配 Ascend，生成配置的 Go 逻辑复用通用 runc-v2 adapter：
+
+| 阶段 | 配置与责任 |
+| --- | --- |
+| 管理员准备 | 安装原厂组件，配置 `ascend` handler 的原厂 `BinaryName` 和源 `RuntimeClass/ascend` |
+| node-agent 发现 | 读取 containerd 生效配置及 imports，解析原厂二进制，发布 `ascend-runc-v2` inventory |
+| catalog 与节点配置 | 生成 `persistent-rootfs-ascend` RuntimeClass；复制源 handler 为 `persistent-rootfs-ascend-runc-v2`，保留原选项并将 `BinaryName` 换为 wrapper 别名；registry 保存原厂委托路径 |
+| Webhook 准入 | 对开启 RootPV 的 Pod，将 `runtimeClassName: ascend` 改为 `persistent-rootfs-ascend`，注入 PVC anchor 和路由信息 |
+| 创建容器 | wrapper/rootfsd 准备 PVC 写层，委托 Ascend runtime；device plugin 分配设备，原厂 runtime/hook 注入设备与驱动 |
+
+```text
+Pod: runtimeClassName=ascend + RootPV 注解 + NPU 资源请求
+  → Webhook: runtimeClassName=persistent-rootfs-ascend
+  → containerd: persistent-rootfs-ascend-runc-v2
+  → rootfs-runtime-wrapper-ascend-runc-v2
+  → ascend-docker-runtime → runc（原厂 hook 注入设备/驱动）
+```
+
+只请求 `huawei.com/Ascend910` 而省略 RuntimeClass，不会自动选择 Ascend；未启用 RootPV 的 Pod
+不会被改成持久根目录 runtime。Pod 重建后文件可保留，芯片会重新分配，计算/显存状态不会保存在 PVC。
+
+直接 YAML 安装现已接入同一条链路，见 [直接安装与旧实例迁移](deployment.md#直接使用-deploymanifests)。
+两种安装方式都不负责安装 Ascend 驱动、原厂 runtime 或 device plugin。
 
 ## 资源分配与持久化
 

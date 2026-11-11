@@ -7,25 +7,6 @@ metadata:
     app.kubernetes.io/name: persistent-rootfs
     app.kubernetes.io/part-of: rootpv
 data:
-  runtimeClassMapping.yaml: |
-    defaultRootfsRuntimeClass: persistent-rootfs-runc
-    mappings:
-      exact:
-        "": persistent-rootfs-runc
-        runc: persistent-rootfs-runc
-        nvidia: persistent-rootfs-nvidia
-        ascend: persistent-rootfs-ascend
-        huawei-npu: persistent-rootfs-ascend
-        mthreads: persistent-rootfs-mthreads
-        rocm: persistent-rootfs-rocm
-      regex:
-        "^nvidia-.*$": persistent-rootfs-nvidia
-        "^ascend-.*$": persistent-rootfs-ascend
-        "^rocm-.*$": persistent-rootfs-rocm
-      resourceHints:
-        nvidia.com/gpu: persistent-rootfs-nvidia
-        huawei.com/Ascend910: persistent-rootfs-ascend
-        mthreads.com/gpu: persistent-rootfs-mthreads
   storagePolicy.yaml: |
     allowStorageClasses:
     - ""

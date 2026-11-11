@@ -204,8 +204,9 @@ kubectl label node <node-name> openfuyao.cn/persistent-rootfs=true --overwrite
 kubectl apply -f rootpv-rendered.yaml
 ```
 
-The legacy static installer in deploy/manifests uses fixed runc/NVIDIA handlers and does not install the Kata
-proxy. Use the rendered current Chart for automatic runtime discovery and Kata support. Offline re-rendering
+Direct installation from `deploy/manifests` also uses runtime discovery/catalog, including configured Ascend
+runtimes. See the [deployment guide](docs/user-guide/deployment.md#直接使用-deploymanifests) for installation
+and migration from the old static handlers. Offline Chart re-rendering
 generates fresh TLS certificates; when applying a new Secret and caBundle, restart the Controller to load the
 matching certificate. See the [deployment guide](docs/user-guide/deployment.md).
 

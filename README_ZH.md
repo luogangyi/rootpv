@@ -194,8 +194,9 @@ kubectl label node <node-name> openfuyao.cn/persistent-rootfs=true --overwrite
 kubectl apply -f rootpv-rendered.yaml
 ```
 
-deploy/manifests 的旧静态 installer 使用固定 runc/NVIDIA handler，不安装 Kata proxy。
-自动发现与 Kata 安装应使用当前 Chart 的渲染结果。离线重新渲染会生成新 TLS 证书；
+`deploy/manifests` 直接安装也使用同一套自动发现/catalog，可接入 Ascend 等已配置的 runtime；
+安装与旧静态实例迁移见[部署指南](docs/user-guide/deployment.md#直接使用-deploymanifests)。
+离线重新渲染 Chart 会生成新 TLS 证书；
 应用新 Secret 和 caBundle 时，需同时重启 Controller，使其加载匹配证书。
 详细步骤见 [部署指南](docs/user-guide/deployment.md)。
 

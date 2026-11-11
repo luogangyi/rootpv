@@ -75,7 +75,7 @@ installer 同时安装 OCI wrapper 和 Kata proxy shim。node-agent 读取主配
 reconcile 阶段生成摘要失败会返回错误，停止此次配置和 registry 写入。排查步骤见 [Kata 指南](../../docs/user-guide/kata-qemu.md)。
 
 rootfsd、Controller 和 installer 应使用同一版本镜像。仅启用 discovery 的当前安装路径
-接入 Kata；旧静态 runc/NVIDIA 清单与 legacy adapter 配置不提供 Kata 支持。
+接入 Kata；`deploy/manifests` 直接安装现也使用同一套自动发现/catalog 和 proxy shim。
 
 ## 验证与测试
 

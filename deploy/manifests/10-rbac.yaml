@@ -30,6 +30,17 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - configmaps
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - pods
   - nodes
   - persistentvolumes
@@ -83,6 +94,10 @@ rules:
   resources:
   - runtimeclasses
   verbs:
+  - create
+  - delete
+  - patch
+  - update
   - get
   - list
   - watch
@@ -113,6 +128,14 @@ metadata:
     app.kubernetes.io/component: node-agent
     app.kubernetes.io/part-of: rootpv
 rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
 - apiGroups:
   - ""
   resources:
