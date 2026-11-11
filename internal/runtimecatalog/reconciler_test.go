@@ -96,6 +96,11 @@ func TestReconcileSkipsStaleInventory(t *testing.T) {
 	if len(catalog.Adapters) != 0 || len(catalog.Routes) != 0 {
 		t.Fatalf("stale inventory must not generate catalog: %#v", catalog)
 	}
+	// An empty catalog must remain stable after its ConfigMap YAML round trip.
+	again, err := (Reconciler{Client: client, Namespace: "rootpv-system"}).Reconcile(context.Background())
+	if err != nil || again.Generation != catalog.Generation {
+		t.Fatalf("empty catalog triggered another reload: generation=%d err=%v", again.Generation, err)
+	}
 }
 
 func TestReconcileSkipsOptedOutRuntimeClass(t *testing.T) {

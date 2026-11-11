@@ -18,6 +18,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -169,15 +170,6 @@ func parseMountInfoOverlay(line string) (SourceOverlay, error) {
 			return SourceOverlay{}, fmt.Errorf("source_overlay_options_invalid: missing %s", key)
 		}
 	}
-	lowerParts := strings.Split(values["lowerdir"], ":")
-	lower := make([]string, 0, len(lowerParts))
-	for _, encoded := range lowerParts {
-		path, err := decodeMountInfoField(encoded)
-		if err != nil || path == "" || !filepath.IsAbs(path) {
-			return SourceOverlay{}, fmt.Errorf("source_overlay_options_invalid: invalid lowerdir %q", encoded)
-		}
-		lower = append(lower, filepath.Clean(path))
-	}
 	upper, err := decodeMountInfoField(values["upperdir"])
 	if err != nil || !filepath.IsAbs(upper) {
 		return SourceOverlay{}, fmt.Errorf("source_overlay_options_invalid: invalid upperdir %q", values["upperdir"])
@@ -186,12 +178,40 @@ func parseMountInfoOverlay(line string) (SourceOverlay, error) {
 	if err != nil || !filepath.IsAbs(work) {
 		return SourceOverlay{}, fmt.Errorf("source_overlay_options_invalid: invalid workdir %q", values["workdir"])
 	}
+	lower, err := parseOverlayLowerdirs(values["lowerdir"], upper)
+	if err != nil {
+		return SourceOverlay{}, err
+	}
 	return SourceOverlay{
 		MountPoint: mountPoint,
 		LowerDirs:  lower,
 		UpperDir:   filepath.Clean(upper),
 		WorkDir:    filepath.Clean(work),
 	}, nil
+}
+
+func parseOverlayLowerdirs(value, upper string) ([]string, error) {
+	var lower []string
+	for _, encoded := range strings.Split(value, ":") {
+		path, err := decodeMountInfoField(encoded)
+		if err != nil || path == "" {
+			return nil, fmt.Errorf("source_overlay_options_invalid: invalid lowerdir %q", encoded)
+		}
+		if !filepath.IsAbs(path) {
+			// containerd compacts sibling snapshot paths to <id>/fs. Resolve
+			// only that form against the absolute active upper's snapshot root;
+			// the caller still compares every path with containerd's API and
+			// validates allowed roots, symlinks and the empty active upper.
+			id, leaf, ok := strings.Cut(path, "/")
+			n, parseErr := strconv.ParseUint(id, 10, 64)
+			if !ok || leaf != "fs" || parseErr != nil || n == 0 || filepath.Base(upper) != "fs" {
+				return nil, fmt.Errorf("source_overlay_options_invalid: invalid relative lowerdir %q", path)
+			}
+			path = filepath.Join(filepath.Dir(filepath.Dir(upper)), path)
+		}
+		lower = append(lower, filepath.Clean(path))
+	}
+	return lower, nil
 }
 
 func decodeMountInfoField(value string) (string, error) {

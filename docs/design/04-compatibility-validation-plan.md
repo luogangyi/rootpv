@@ -103,7 +103,7 @@ device plugin 版本均是独立组合。每个“待验证”行都应先确认
 | --- | --- | --- | --- | --- |
 | 标准 OCI runtime | runc / `io.containerd.runc.v2` | 完整正向 E2E 与恢复测试 | 发布阻塞 | 验证中（Kubernetes v1.29、containerd 2.1.1（厂商构建）、amd64 基础功能、性能与 rootfsd 重启） |
 | runc-v2 自定义 runtime | `BinaryName` 指向非 wrapper 的 delegate | 验证 adapter 发现、参数/信号/退出码、create/delete/state 和重启恢复 | 高 | 待验证 |
-| NVIDIA GPU | 整卡；MIG；有 vGPU 环境时单列 | GPU 分配、`nvidia-smi`/工作负载、持久化写入、重建与清理 | 高 | 待验证 |
+| NVIDIA GPU | 整卡；MIG；有 vGPU 环境时单列 | GPU 分配、`nvidia-smi`/工作负载、持久化写入、重建与清理 | 高 | [RTX 5090 / 610.57.04 验证](../../tests/e2e/results/nvidia-2026-11-08.md)：CDI、legacy envvar 分配、实算、持久化与清理；其他驱动、MIG/vGPU、GDS/GDRCopy/MOFED 待验证 |
 | AMD GPU/ROCm | 整卡；有切分能力时单列 | GPU 工作负载、设备节点/环境保留、持久化与清理 | 高 | 待验证 |
 | Intel GPU | 整卡；有虚拟化切分时单列 | GPU 工作负载、RuntimeClass/handler 路径和持久化 | 中 | 待验证 |
 | MThreads GPU | 整卡；有切分能力时单列 | 厂商工作负载、adapter 路径、持久化与清理 | 中 | 待验证 |

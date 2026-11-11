@@ -18,6 +18,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -43,13 +44,16 @@ func TestFlatOverlayLinuxIntegration(t *testing.T) {
 	writeIntegrationFile(t, filepath.Join(lowerBase, "lower-parent", "existing.txt"), "existing")
 	writeIntegrationFile(t, filepath.Join(lowerBase, "opaque", "old.txt"), "old")
 	writeIntegrationFile(t, filepath.Join(lowerTop, "top.txt"), "top")
+	// AI images commonly exceed one page of absolute lowerdir options. Keep
+	// the existing copy-up/whiteout/remount checks on that same real mount path.
+	lowers := longImageLowerdirs(t, root, []string{lowerTop, lowerBase})
 
 	sourceData := strings.Join([]string{
-		"lowerdir=" + lowerTop + ":" + lowerBase,
+		"lowerdir=" + strings.Join(lowers, ":"),
 		"upperdir=" + sourceUpper,
 		"workdir=" + sourceWork,
 	}, ",")
-	if err := syscall.Mount("overlay", sourceMerged, "overlay", 0, sourceData); err != nil {
+	if err := mountOverlay("overlay", sourceMerged, "overlay", sourceData); err != nil {
 		if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EINVAL) {
 			t.Skipf("requires a supported OverlayFS mount environment: %v", err)
 		}
@@ -70,7 +74,7 @@ func TestFlatOverlayLinuxIntegration(t *testing.T) {
 	}
 	validated, err := InspectAndValidateSourceOverlay(mountInfo, sourceMerged, SourceOverlay{
 		Snapshotter: "overlayfs", SnapshotKey: "active", RootfsChainID: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		LowerDirs: []string{lowerTop, lowerBase}, UpperDir: sourceUpper, WorkDir: sourceWork,
+		LowerDirs: lowers, UpperDir: sourceUpper, WorkDir: sourceWork,
 	}, []string{filepath.Join(root, "snapshots")})
 	if err != nil {
 		t.Fatalf("inspect active source overlay: %v", err)
@@ -140,6 +144,18 @@ func TestFlatOverlayLinuxIntegration(t *testing.T) {
 	if len(entries) != 0 {
 		t.Fatalf("containerd active source upper was modified: %v", entries)
 	}
+}
+
+func longImageLowerdirs(t *testing.T, root string, lowers []string) []string {
+	t.Helper()
+	for id := 4; id <= 100; id++ {
+		path := filepath.Join(root, "snapshots", strconv.Itoa(id), "fs")
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		lowers = append(lowers, path)
+	}
+	return lowers
 }
 
 func writeIntegrationFile(t *testing.T, path, content string) {

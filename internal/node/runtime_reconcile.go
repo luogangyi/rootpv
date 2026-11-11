@@ -183,7 +183,7 @@ func reconcileCatalogAdapter(raw, effective map[string]any, adapter config.Catal
 // loadContainerdConfig rejects multiple runtime tables before this selection.
 func adapterRuntimePlugin(effective map[string]any, sourceHandler string) (string, error) {
 	plugins := mapValue(effective["plugins"])
-	for _, name := range criRuntimePluginNames {
+	for _, name := range activeCRIRuntimePlugins(effective) {
 		table := mapValue(mapValue(plugins[name])["containerd"])
 		if len(table) == 0 {
 			continue
@@ -193,7 +193,7 @@ func adapterRuntimePlugin(effective map[string]any, sourceHandler string) (strin
 		}
 	}
 	if sourceHandler == "runc" {
-		for _, name := range criRuntimePluginNames {
+		for _, name := range activeCRIRuntimePlugins(effective) {
 			if len(mapValue(mapValue(plugins[name])["containerd"])) > 0 {
 				return name, nil
 			}

@@ -43,6 +43,7 @@ RootPV uses public Kubernetes, containerd, OCI runtime-spec, and Linux VFS inter
 - Strict base-image identity checking to prevent accidental reuse with an incompatible image.
 - Runtime adapters for `io.containerd.runc.v2`-based runtimes, including device-specific runtimes when the node runtime is already installed and discovered.
 - gVisor `io.containerd.runsc.v1` adapters using a private shim config and write-through rootfs; see the [gVisor guide](docs/user-guide/gvisor.md).
+- NVIDIA runc-v2 adapters preserve GPU allocation through CDI or the vendor runtime; see the [NVIDIA guide](docs/user-guide/nvidia.md) for driver and MIG boundaries.
 - Kata + QEMU task-shim adapters with explicit `runtime_path` and QEMU `ConfigPath`; see the [Kata guide](docs/user-guide/kata-qemu.md).
 
 The following are out of scope: non-containerd runtimes, non-`overlayfs` snapshotters, rootless or unprivileged node installation, shared read/write use of one root filesystem, automatic rebase/reset across image chains, and converting a writable layer into an OCI image.
@@ -59,6 +60,11 @@ Kata + QEMU has separate functional evidence on Kubernetes 1.34.3, containerd 2.
 QEMU 11.0.1 and ext4 local RWO PVCs. That record covers persistence, sidecars, single-writer exclusion,
 rootfsd restart and normal deletion. It does not establish dynamic CSI, node/VM failure recovery or performance
 support for Kata; see the [verification record](tests/e2e/results/kata-qemu-2026-10-14.md).
+
+NVIDIA GPU validation covers RTX 5090, driver 610.57.04, Toolkit 1.19.1 and ext4 local RWO PVCs.
+CDI and legacy envvar allocation passed GPU computation, three persistence generations, sidecar isolation,
+single-writer exclusion and cleanup. Switching back to CDI preserved the same PVC's files. Other driver
+versions, driver upgrades and MIG require separate validation; see the [NVIDIA record](tests/e2e/results/nvidia-2026-11-08.md).
 
 Directly downgrading a running containerd 2.1 state to 1.6 is not supported: the 1.6.28 candidate starts but
 cannot reuse the 2.1 runtime state. Cross-major rollback needs a controlled, drained-node migration that
@@ -80,7 +86,8 @@ its verification record is published. Entries in **Not yet validated** are not s
 | CPU architecture and kernel | linux/arm64 and additional supported Linux kernel/distribution combinations | — | Baseline suite and OverlayFS recovery coverage |
 | Storage | RWO block PVC with XFS | — | OverlayFS mount, persistence, and cleanup coverage |
 | runc-v2 adapters | Custom `io.containerd.runc.v2` runtimes using a non-wrapper `BinaryName` delegate | — | Adapter discovery plus lifecycle, signal, exit-code, and recovery coverage |
-| GPU runtimes | NVIDIA (including MIG/vGPU where available), AMD ROCm, Intel, and MThreads | — | Device workload, persistence, cleanup, and each device-partitioning mode |
+| NVIDIA GPU | RTX 5090; driver 610.57.04; Toolkit 1.19.1; containerd 2.1.1; ext4 local PVC | [CDI and legacy envvar allocation, GPU compute, three persistence generations, sidecar isolation and cleanup](tests/e2e/results/nvidia-2026-11-08.md) | Other drivers and driver upgrades; MIG/vGPU/time-slicing; GDS/GDRCopy/MOFED; dynamic CSI; performance |
+| Other GPU runtimes | AMD ROCm, Intel, and MThreads | — | Device workload, persistence, cleanup, and each device-partitioning mode |
 | NPU runtimes | Ascend and other runc-v2-compatible accelerators; whole-device and virtual/partitioned modes tracked separately | — | Vendor workload, persistence, cleanup, and isolation coverage |
 | Kata + QEMU | Linux AMD64; Kubernetes 1.34.3; containerd 2.1.1; Kata 4.2.0 Rust; QEMU 11.0.1; ext4 local RWO PVC | [Persistence, sidecar isolation, single-writer exclusion, rootfsd restart, normal Kata and cleanup](tests/e2e/results/kata-qemu-2026-10-14.md) | Dynamic CSI PVC, node/VM failure recovery, performance and devices |
 | gVisor | Linux AMD64; Kubernetes 1.37.1; containerd 2.1.1; runsc 20261012.0; systrap; ext4 local RWO PVC | [Live Webhook/catalog, three persistence generations, sidecars, single-writer exclusion, rootfsd restart and automatic shim exit](tests/e2e/results/gvisor-online-2026-10-20.md) | Dynamic CSI, performance, devices, checkpoint, Webhook/configuration outage recovery and node/Sentry/gofer failure recovery |
@@ -336,6 +343,25 @@ Use `runtimeClassName: gvisor` with the same RootPV annotations and backing PVC.
 explicit TypeUrl/ConfigPath and an absolute binary_name. RootPV generates a private shim config with overlay2=none;
 the source handler remains unchanged. The shim's global startup config must enable grouping=true; setting it only
 in ConfigPath is insufficient. See the [guide](docs/user-guide/gvisor.md) and [complete test YAML](tests/e2e/manifests/gvisor.yaml).
+
+### NVIDIA GPU workload
+
+Request GPU resources and retain the working source RuntimeClass (for example `nvidia`), then add the standard
+RootPV annotations. Native containerd CDI can also use the node-default adapter. GPU allocation remains with
+the device plugin; a recreated Pod may receive a different device while retaining its files. See the
+[NVIDIA guide](docs/user-guide/nvidia.md) and [complete local-PV test YAML](tests/e2e/manifests/nvidia.yaml).
+
+First verify an ordinary GPU Pod with the same image and resource request. In the sample YAML, replace the
+node name, create the local PV directory, and select an image compatible with the installed GPU and driver:
+
+```bash
+kubectl apply -f tests/e2e/manifests/nvidia.yaml
+kubectl -n rootpv-test-nvidia wait --for=condition=Ready pod/nvidia-rootpv-test --timeout=180s
+kubectl -n rootpv-test-nvidia logs nvidia-rootpv-test -c app
+```
+
+Delete and reapply the Pod to check that the marker remains unchanged and the counter increases.
+For MIG, use the device plugin's advertised resource key; the current hardware validation covers whole GPUs.
 
 ## Development
 

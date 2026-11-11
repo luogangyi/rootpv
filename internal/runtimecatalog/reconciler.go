@@ -241,8 +241,18 @@ func AdapterReadinessValue(digest string) string {
 }
 
 func sameCatalog(a, b config.RuntimeCatalog) bool {
-	a.Generation = 0
-	b.Generation = 0
+	// YAML encodes nil slices as []; both represent the same empty catalog.
+	// Normalize local copies, then compare all fields so schema additions
+	// cannot silently bypass generation updates.
+	for _, catalog := range []*config.RuntimeCatalog{&a, &b} {
+		catalog.Generation = 0
+		if len(catalog.Adapters) == 0 {
+			catalog.Adapters = nil
+		}
+		if len(catalog.Routes) == 0 {
+			catalog.Routes = nil
+		}
+	}
 	return reflect.DeepEqual(a, b)
 }
 
