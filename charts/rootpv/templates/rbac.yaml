@@ -27,17 +27,6 @@ rules:
   - patch
   - update
 - apiGroups:
-  - ""
-  resources:
-  - configmaps
-  verbs:
-  - create
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
   - openfuyao.cn
   resources:
   - persistentrootfses
@@ -126,14 +115,6 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - configmaps
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - ""
-  resources:
   - events
   verbs:
   - create
@@ -173,6 +154,79 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
+  name: {{ include "rootpv.nodeServiceAccountName" . }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "rootpv.nodeServiceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "rootpv.controllerServiceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+{{ include "rootpv.controllerLabels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  resourceNames:
+  - rootpv-runtime-adapters
+  verbs:
+  - get
+  - update
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "rootpv.controllerServiceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+{{ include "rootpv.controllerLabels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "rootpv.controllerServiceAccountName" . }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "rootpv.controllerServiceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "rootpv.nodeServiceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+{{ include "rootpv.nodeAgentLabels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  resourceNames:
+  - rootpv-runtime-adapters
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "rootpv.nodeServiceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+{{ include "rootpv.nodeAgentLabels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
   name: {{ include "rootpv.nodeServiceAccountName" . }}
 subjects:
 - kind: ServiceAccount

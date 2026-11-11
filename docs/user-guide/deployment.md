@@ -95,6 +95,11 @@ kubectl -n rootpv-system rollout restart deployment/persistent-rootfs-controller
 不再运行只生成 runc/NVIDIA 的旧 `configure-containerd-rootpv.sh`，也不预建固定 RuntimeClass。
 已配置好的 Ascend runc-v2 handler 按相同方式接入。
 
+Controller 仅在安装命名空间创建 catalog ConfigMap，并读取/更新 `rootpv-runtime-adapters`；
+node-agent 仅可读取该 ConfigMap。RuntimeClass 仍使用集群级权限。
+node-agent 的 `/host` 挂载只读；containerd 配置、`/etc/rootpv` 和 wrapper 安装目录
+通过单独的可写挂载更新。节点代理仍为 privileged，这项收紧不构成宿主机安全隔离。
+
 准备当前代码构建的镜像；ARM64 节点需要 ARM64 或多架构镜像。复制清单到本地发布目录，
 把所有 `rootpv:latest` 替换成已推送的镜像标签。核对 DaemonSet 的宿主路径、
 `allowedOverlaySnapshotRoots` 和 `--containerd-restart-command`；默认重启命令要求宿主使用 systemd。

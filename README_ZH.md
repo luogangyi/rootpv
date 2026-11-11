@@ -81,7 +81,7 @@ CDI 与 legacy envvar 分配均通过 GPU 实算、三代持久化重建、sidec
 | --- | --- | --- | --- |
 | 基线平台 | linux/amd64；Kubernetes v1.29 系列；containerd 2.1.1（厂商构建）；`overlayfs`；原生 `io.containerd.runc.v2`；ext4 的 RWO 块存储 PVC | 功能和性能 E2E；rootfsd、containerd 服务和节点重启各连续 3 轮；10 实例并发隔离；同路径单写互斥；RootPV Helm 升级/回滚 | 跨 containerd 大版本的受控迁移；卸载后自动清理节点 runtime handler |
 | Kubernetes 与 containerd | Kubernetes v1.27、v1.28、v1.30 及后续受支持系列；containerd 1.6、1.7、2.0 和其他 2.1 组合 | Kubernetes v1.29 + 官方 containerd 1.6.39、1.7.35、2.0.12 和静态 2.1.9：动态 PVC 持久化与 Pod 重建 | 其他全部配对；官方构建上的恢复、升级和性能 |
-| CPU 架构与内核 | linux/arm64 及其他 Linux 内核/发行版组合 | [ARM64、Linux 5.10 上的 Ascend 910C 功能用例](tests/e2e/results/ascend-910c-2026-11-11.md) | 完整基线套件、节点/OverlayFS 故障恢复 |
+| CPU 架构与内核 | linux/arm64 及其他受支持的 Linux 内核/发行版组合 | [ARM64、Linux 5.10 上的 Ascend 910C 功能用例](tests/e2e/results/ascend-910c-2026-11-11.md) | 完整基线套件、节点/OverlayFS 故障恢复 |
 | 存储 | XFS 的 RWO 块存储 PVC | — | OverlayFS 挂载、持久化和清理覆盖 |
 | runc-v2 adapter | `BinaryName` delegate 非 wrapper 的自定义 `io.containerd.runc.v2` runtime | — | adapter 发现、生命周期、信号、退出码和恢复 |
 | NVIDIA GPU | RTX 5090；驱动 610.57.04；Toolkit 1.19.1；containerd 2.1.1；ext4 local PVC | [CDI 与 legacy envvar 分配、GPU 实算、三代持久化、sidecar 隔离与清理](tests/e2e/results/nvidia-2026-11-08.md) | 其他驱动与驱动升级；MIG/vGPU/time-slicing；GDS/GDRCopy/MOFED；动态 CSI；性能 |

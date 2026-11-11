@@ -56,6 +56,13 @@ nodeAgent:
 
 路径必须对应真实节点配置。安装会修改选定节点的 containerd 主配置并可能重启服务。
 
+`/host` 挂载只读；`hostPaths.containerdEtc`、`hostPaths.etcRootpv` 和
+`hostPaths.usrLocalBin` 通过独立可写挂载供节点代理更新配置和 wrapper。
+节点代理仍为 privileged，不应将只读挂载视为宿主机安全隔离。
+ConfigMap 权限通过安装命名空间的 Role 授予：Controller 可创建 catalog，
+仅能读取/更新 `rootpv-runtime-adapters`，node-agent 仅可读取该 ConfigMap。
+RuntimeClass 仍使用集群级权限。使用 `rbac.create=false` 时也需自行提供这些命名空间权限。
+
 values.yaml 中 supportedRuntimeTypes 是当前类型清单；修改该列表不会为任意 shim 增加实现。
 实际兼容性判断由 discovery 和 runtime adapter 代码执行。
 config.storagePolicy 当前渲染到 ConfigMap，但 Controller 没有读取该文件来强制执行类名准入；
