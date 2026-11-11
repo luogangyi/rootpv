@@ -1,6 +1,6 @@
 # RootPV 集群 E2E 测试
 
-本目录包含已部署 RootPV 集群的功能与性能脚本，以及 Kata + QEMU、gVisor、NVIDIA 的完整手工测试清单。
+本目录包含已部署 RootPV 集群的功能与性能脚本，以及 Kata + QEMU、gVisor、NVIDIA、Ascend 的完整手工测试清单。
 脚本通过 SSH 在控制面执行 kubectl，开发机无需保存 kubeconfig。
 测试记录按运行时、存储和版本组合分别解释，不能由一个组合推导全部 runtime 支持。
 
@@ -134,3 +134,13 @@ adapter ID 为 runsc-v1。先按 [gVisor 指南](../../docs/user-guide/gvisor.md
 [在线记录](results/gvisor-online-2026-10-20.md)覆盖真实 Webhook、inventory/catalog、节点 reconcile、
 三代重建、独立校验拒绝和 shim 自动退出。初次 [隔离记录](results/gvisor-2026-10-20.md)使用离线准入，
 保留其历史边界；[分组定位记录](results/gvisor-shim-lifecycle-2026-10-20.md)说明闲置 shim 的原因。
+
+## Ascend 910C 测试
+
+[manifests/ascend.yaml](manifests/ascend.yaml) 包含静态 local PV、NPU app 和无设备 sidecar。
+按 [Ascend 指南](../../docs/user-guide/ascend.md) 替换节点并准备原厂 runtime/plugin、兼容的 A3 镜像。
+先验证普通 Pod，再检查 RootPV 路由、实际算子、重建持久化、单写互斥和清理。
+资源单位以 device plugin 为准，不把两个芯片等同于同一张卡；`npu-smi` 成功也不替代计算校验。
+已验证版本与未覆盖范围见 [910C 结果](results/ascend-910c-2026-11-11.md)。
+更换驱动、runtime 或 plugin 后，不以版本号更高作为通过依据；重新执行同组合的普通 NPU 对照、
+RootPV 计算、持久化重建、隔离与清理用例。当前记录不定义最低支持版本，也不覆盖驱动升级路径。

@@ -8,6 +8,7 @@
 - [Helm Chart 说明](../charts/rootpv/README.md)：安装参数、OCI/Kata 两条接入路径与验证命令。
 - [完整 Kata 测试清单](../tests/e2e/manifests/kata-qemu.yaml)：Namespace、local PV、PVC 和双容器 Pod。
 - [gVisor 使用指南](user-guide/gvisor.md)：原生 shim 配置、持久化与完整测试清单。
+- [Ascend 910C 使用指南](user-guide/ascend.md)：原厂 runtime、containerd v3、芯片资源单位和完整 local PV 清单。
 - [NVIDIA 使用指南](user-guide/nvidia.md)：CDI/legacy 接入、local PV 清单、驱动升级和 MIG 边界。
 
 ## 设计与演进
@@ -29,5 +30,7 @@
 - [gVisor shim 生命周期](../tests/e2e/results/gvisor-shim-lifecycle-2026-10-20.md)：启动分组原因与原生自动退出对照。
 - [gVisor 在线功能验收](../tests/e2e/results/gvisor-online-2026-10-20.md)：真实 Webhook/catalog、三代重建、自动退出与环境恢复。
 - [NVIDIA 功能验收](../tests/e2e/results/nvidia-2026-11-08.md)：CDI 实算、legacy hook、三代重建、隔离和清理；标明驱动/MIG 未覆盖范围。
+
+- [Ascend 910C 功能验收](../tests/e2e/results/ascend-910c-2026-11-11.md)：ARM64、NPU 实算、持久化、隔离和清理。
 
 设计中的实施目标不等于已验证能力；对外说明以兼容性矩阵和对应结果记录为准。

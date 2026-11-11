@@ -1,6 +1,6 @@
 # RootPV 兼容性验证方案与矩阵
 
-**文档状态：** 持续验证与维护（2026-10-14 更新）
+**文档状态：** 持续验证与维护（2026-11-11 更新）
 
 **维护方式：** 每次验证完成后更新本表和对应的可复现测试记录；未记录证据的组合不得标记为支持。
 
@@ -85,7 +85,7 @@ device plugin 的精确版本。
 | containerd | 2.0.x | 在一个受支持 Kubernetes 版本上完整验证 | stock `io.containerd.runc.v2` | 验证中（官方 2.0.12 在 Kubernetes v1.29 完成 C04） |
 | containerd | 2.1.x | 作为当前基线持续回归 | stock `io.containerd.runc.v2` | 验证中（2.1.1（厂商构建）：基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01；官方静态 2.1.9：PVC 持久化与 Pod 重建。直接降级到 1.6.28 不可复用运行中 2.1 状态） |
 | CPU 架构 | linux/amd64 | 每个 containerd 大版本至少一个基础组合 | stock `io.containerd.runc.v2` | 验证中（Kubernetes v1.29、containerd 2.1.1（厂商构建） 基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01） |
-| CPU 架构 | linux/arm64 | 至少覆盖一个 Kubernetes/containerd 基础组合及一个设备组合 | stock `io.containerd.runc.v2` | 待验证 |
+| CPU 架构 | linux/arm64 | Kubernetes 1.34.3（厂商构建）/containerd 2.1.1/Linux 5.10/ext4 local PVC | Ascend runc-v2 | 已验证限定功能用例，见 [910C 记录](../../tests/e2e/results/ascend-910c-2026-11-11.md)；不替代完整基线/恢复套件 |
 | 操作系统/内核 | 主流发行版的 LTS 内核 | 每个新内核系列执行 OverlayFS 和恢复用例 | stock `io.containerd.runc.v2` | 待验证 |
 | OverlayFS 存储 | RWO block PVC + ext4 | 作为所有组合的首选基线 | stock `io.containerd.runc.v2` | 验证中（Kubernetes v1.29、containerd 2.1.1（厂商构建） 基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01） |
 | OverlayFS 存储 | RWO block PVC + XFS | 单独确认 XFS/OverlayFS 所需 mount 与内核能力 | stock `io.containerd.runc.v2` | 待验证 |
@@ -99,6 +99,9 @@ device plugin 的精确版本。
 device plugin 版本均是独立组合。每个“待验证”行都应先确认 source RuntimeClass 在未启用 RootPV
 时可正常运行，再验证 RootPV Shadow RuntimeClass 路径。
 
+Ascend 的 runc-v2 接口条件不包含驱动/runtime 数字版本门槛；当前尚未确定最低支持版本。
+下表的固定组合和厂商配套范围应分别理解，不能由某一组合通过推导同系列补丁或更高版本全部兼容。
+
 | 类别 | 首批目标形态 | RootPV 验证方式 | 计划级别 | 当前状态 |
 | --- | --- | --- | --- | --- |
 | 标准 OCI runtime | runc / `io.containerd.runc.v2` | 完整正向 E2E 与恢复测试 | 发布阻塞 | 验证中（Kubernetes v1.29、containerd 2.1.1（厂商构建）、amd64 基础功能、性能与 rootfsd 重启） |
@@ -107,8 +110,8 @@ device plugin 版本均是独立组合。每个“待验证”行都应先确认
 | AMD GPU/ROCm | 整卡；有切分能力时单列 | GPU 工作负载、设备节点/环境保留、持久化与清理 | 高 | 待验证 |
 | Intel GPU | 整卡；有虚拟化切分时单列 | GPU 工作负载、RuntimeClass/handler 路径和持久化 | 中 | 待验证 |
 | MThreads GPU | 整卡；有切分能力时单列 | 厂商工作负载、adapter 路径、持久化与清理 | 中 | 待验证 |
-| Ascend NPU | 训练/推理整卡；910/310 等可获得型号分别记录 | NPU 工作负载、设备节点/环境、持久化、重建和清理 | 高 | 待验证 |
-| Ascend NPU 切分 | 虚拟 NPU、资源切分或调度插件形态 | 每种切分策略独立完成整套 NPU E2E，不从整卡结果推导 | 高 | 待验证 |
+| Ascend NPU | 910C 非切分芯片；910/310 其他型号分别记录 | NPU 实算、原厂 hook、持久化、重建、隔离和清理 | 高 | 910C 限定组合已验证，见 [2026-11-11 记录](../../tests/e2e/results/ascend-910c-2026-11-11.md)；其他型号、版本、HCCL 和性能待验证 |
+| Ascend NPU 切分 | 虚拟 NPU、资源切分或共享形态 | 每种切分策略独立完成整套 NPU E2E，不从非切分芯片结果推导 | 高 | 待验证 |
 | 其他 NPU/加速器 | 厂商 runtime 属于 runc-v2 BinaryName 模型 | 按“runc-v2 自定义 runtime + 设备 E2E”执行 | 中 | 待验证 |
 | Kata + QEMU（Rust） | io.containerd.kata-qemu.v2；显式 runtime_path/ConfigPath；flat-lowerdirs | task proxy 正向持久化、多容器、互斥、rootfsd 重启和清理 | 已接入，继续补全发布矩阵 | 已验证（限定用例）：Kata 4.2.0 / QEMU 11.0.1 / ext4 local PVC，见结果记录 |
 | Kata 通用 runtime type / Go runtime | 明确 QEMU 配置的 io.containerd.kata.v2；其他 Kata 实现/版本 | 分别完成配置发现、shim 协议和正向 E2E | 高 | 已有配置/单元测试；真实集群组合待验证 |

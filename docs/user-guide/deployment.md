@@ -177,3 +177,14 @@ runtimeClassName: gvisor。要求 flat-lowerdirs，详见 [gVisor 指南](gvisor
 containerd 原生 CDI 也可使用节点默认 adapter。RootPV 保留设备分配与注入，不安装驱动或修改 MIG 切分。
 接入步骤、CDI/legacy 区别、自定义节点路径和驱动升级边界见 [NVIDIA 指南](nvidia.md)，
 整卡实测结果见 [验证记录](../../tests/e2e/results/nvidia-2026-11-08.md)。
+
+## Ascend 910C 接入
+
+先验证原厂 runtime/device plugin 下的普通 NPU 计算，再用当前 Chart 自动发现 `ascend` runc-v2 handler。
+ARM64 节点使用匹配架构的 RootPV 镜像；业务保留源 RuntimeClass 并添加 RootPV 注解。
+containerd v3 配置、plugin 自身 RuntimeClass、芯片分配单位和版本边界见 [Ascend 指南](ascend.md)，
+可复用 [完整 local PV 清单](../../tests/e2e/manifests/ascend.yaml)。
+RootPV 不额外限定驱动/runtime 的数字版本；目前仅验证驱动 25.5.6、runtime/plugin 7.3.0、
+CANN 8.5.0 A3 与 containerd 2.1.1。该组合不是最低版本要求，其他组合和升级路径须单独验收。
+安装器执行成功不代表 handler 配置正确：核对生效配置为 `io.containerd.runc.v2`，并确认 plugin
+实际通过 Ascend runtime 分配设备，详情见 [版本要求](ascend.md#版本与未覆盖范围)。

@@ -126,3 +126,13 @@ GPU Operator 的 v3 导入配置按生效 CRI 表发现。节点使用自定义 
 同步配置 hostPaths、`kubeletRoot`、`allowedOverlaySnapshotRoots`，并确保容器内可访问原始绝对快照路径。
 CDI/legacy、驱动与 MIG 要求见 [NVIDIA 指南](../../docs/user-guide/nvidia.md)，
 可复用 [local PV 测试清单](../../tests/e2e/manifests/nvidia.yaml)。
+
+## Ascend 910C
+
+已安装的 Ascend Docker Runtime 通过 `io.containerd.runc.v2` 和绝对 `options.BinaryName` 自动发现，
+无需增加 Chart 支持类型。ARM64 节点选择匹配架构的镜像，先通过普通 NPU Pod 的计算验收。
+Chart 不安装厂商组件，也不修改 NPU 切分或默认 runtime；containerd v3 与 device plugin 的部署细节
+见 [Ascend 指南](../../docs/user-guide/ascend.md)和 [完整测试 YAML](../../tests/e2e/manifests/ascend.yaml)。
+Chart 不按 Ascend 驱动/runtime 版本过滤节点；这不代表所有版本均已兼容。
+当前实测驱动 25.5.6、runtime/plugin 7.3.0、CANN 8.5.0 A3 和 containerd 2.1.1，
+最低支持版本尚未确定，其他组合按 [版本要求](../../docs/user-guide/ascend.md#版本与未覆盖范围) 验证。

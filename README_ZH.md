@@ -43,6 +43,7 @@ RootPV 仅使用 Kubernetes、containerd、OCI runtime-spec 和 Linux VFS 的公
 - 严格校验基础镜像身份，防止将已有可写层意外复用到不兼容镜像。
 - 基于 `io.containerd.runc.v2` 的 runtime adapter；节点已正确安装且可发现的设备专用 runtime 也可接入。
 - gVisor io.containerd.runsc.v1 通过独立 shim 配置接入，见 [gVisor 指南](docs/user-guide/gvisor.md)。
+- Ascend 910C 复用原厂 runc-v2 runtime 和 device plugin；见 [Ascend 指南](docs/user-guide/ascend.md)。
 - NVIDIA runc-v2 adapter 保留 CDI 或原厂 runtime 的 GPU 注入；驱动与 MIG 边界见 [NVIDIA 指南](docs/user-guide/nvidia.md)。
 - Kata + QEMU task-shim adapter；源 handler 需显式配置 `runtime_path` 和 QEMU `ConfigPath`，见 [Kata 使用指南](docs/user-guide/kata-qemu.md)。
 
@@ -80,12 +81,13 @@ CDI 与 legacy envvar 分配均通过 GPU 实算、三代持久化重建、sidec
 | --- | --- | --- | --- |
 | 基线平台 | linux/amd64；Kubernetes v1.29 系列；containerd 2.1.1（厂商构建）；`overlayfs`；原生 `io.containerd.runc.v2`；ext4 的 RWO 块存储 PVC | 功能和性能 E2E；rootfsd、containerd 服务和节点重启各连续 3 轮；10 实例并发隔离；同路径单写互斥；RootPV Helm 升级/回滚 | 跨 containerd 大版本的受控迁移；卸载后自动清理节点 runtime handler |
 | Kubernetes 与 containerd | Kubernetes v1.27、v1.28、v1.30 及后续受支持系列；containerd 1.6、1.7、2.0 和其他 2.1 组合 | Kubernetes v1.29 + 官方 containerd 1.6.39、1.7.35、2.0.12 和静态 2.1.9：动态 PVC 持久化与 Pod 重建 | 其他全部配对；官方构建上的恢复、升级和性能 |
-| CPU 架构与内核 | linux/arm64 及其他受支持 Linux 内核/发行版组合 | — | 基线用例与 OverlayFS 恢复覆盖 |
+| CPU 架构与内核 | linux/arm64 及其他 Linux 内核/发行版组合 | [ARM64、Linux 5.10 上的 Ascend 910C 功能用例](tests/e2e/results/ascend-910c-2026-11-11.md) | 完整基线套件、节点/OverlayFS 故障恢复 |
 | 存储 | XFS 的 RWO 块存储 PVC | — | OverlayFS 挂载、持久化和清理覆盖 |
 | runc-v2 adapter | `BinaryName` delegate 非 wrapper 的自定义 `io.containerd.runc.v2` runtime | — | adapter 发现、生命周期、信号、退出码和恢复 |
 | NVIDIA GPU | RTX 5090；驱动 610.57.04；Toolkit 1.19.1；containerd 2.1.1；ext4 local PVC | [CDI 与 legacy envvar 分配、GPU 实算、三代持久化、sidecar 隔离与清理](tests/e2e/results/nvidia-2026-11-08.md) | 其他驱动与驱动升级；MIG/vGPU/time-slicing；GDS/GDRCopy/MOFED；动态 CSI；性能 |
 | 其他 GPU runtime | AMD ROCm、Intel 和 MThreads | — | 设备工作负载、持久化、清理和各设备切分形态 |
-| NPU runtime | Ascend 及其他 runc-v2 兼容加速器；整卡和虚拟/切分形态分别记录 | — | 厂商工作负载、持久化、清理和隔离 |
+| Ascend 910C | linux/arm64；Kubernetes 1.34.3（厂商构建）；containerd 2.1.1；驱动 25.5.6；runtime/plugin 7.3.0；CANN 8.5.0 A3；ext4 local PVC | [非切分芯片分配、NPU 实算、持久化、sidecar 隔离与清理](tests/e2e/results/ascend-910c-2026-11-11.md) | vNPU/切分/共享；CDI；HCCL；其他驱动与升级；节点故障恢复；动态 CSI；性能 |
+| 其他 NPU runtime | 其他 runc-v2 兼容加速器 | — | 厂商工作负载、持久化、清理和隔离 |
 | Kata + QEMU | Linux AMD64；Kubernetes 1.34.3；containerd 2.1.1；Kata 4.2.0 Rust；QEMU 11.0.1；ext4 local RWO PVC | [持久化、sidecar 隔离、单写互斥、rootfsd 重启、普通 Kata 与清理](tests/e2e/results/kata-qemu-2026-10-14.md) | 动态 CSI PVC、节点/VM 故障恢复、性能与设备 |
 | gVisor | Linux AMD64；Kubernetes 1.37.1；containerd 2.1.1；runsc 20261012.0；systrap；ext4 local RWO PVC | [在线 Webhook/catalog、三代持久化、sidecar、单写者互斥、rootfsd 重启与 shim 自动退出](tests/e2e/results/gvisor-online-2026-10-20.md) | 动态 CSI、性能、设备、checkpoint、Webhook/配置中断恢复及节点/Sentry/gofer 故障恢复 |
 | 其他独立 shim | Kata CLH 与未实现 adapter 的 shim | 历史 gVisor 负向记录仅对应旧实现 | 未支持类型继续失败关闭 |
@@ -344,6 +346,16 @@ kubectl -n rootpv-test-nvidia logs nvidia-rootpv-test -c app
 
 删除并重新创建 Pod 后，marker 应保持不变、计数递增。MIG 需使用 device plugin 实际公布的资源键；
 当前实机验证覆盖整卡。CDI/legacy 配置、驱动升级及 MIG 注意事项见 [NVIDIA 指南](docs/user-guide/nvidia.md)。
+
+### Ascend 910C 工作负载
+
+先验证普通 NPU Pod，沿用由 `io.containerd.runc.v2` 和原厂 runtime 提供的 `ascend` RuntimeClass，
+再添加标准 RootPV 注解。按 device plugin 实际公布的资源申请 NPU；资源数量可能代表芯片数而非物理卡数。
+参见 [Ascend 指南](docs/user-guide/ascend.md)、[完整 local PV YAML](tests/e2e/manifests/ascend.yaml)
+和 [验证记录](tests/e2e/results/ascend-910c-2026-11-11.md)。RootPV 不安装驱动/plugin，也不管理 NPU 切分。
+RootPV 不硬编码 Ascend 驱动/runtime 版本，也尚未确定最低支持版本。已验证组合为驱动 25.5.6、
+runtime/device plugin 7.3.0、CANN 8.5.0 A3 和 containerd 2.1.1。其他组合需满足厂商配套要求并补做
+RootPV 生命周期验证；7.3.0 安装器的配置注意事项见 [版本与接入说明](docs/user-guide/ascend.md#版本与未覆盖范围)。
 
 ## 开发
 

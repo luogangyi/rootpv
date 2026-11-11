@@ -43,6 +43,7 @@ RootPV uses public Kubernetes, containerd, OCI runtime-spec, and Linux VFS inter
 - Strict base-image identity checking to prevent accidental reuse with an incompatible image.
 - Runtime adapters for `io.containerd.runc.v2`-based runtimes, including device-specific runtimes when the node runtime is already installed and discovered.
 - gVisor `io.containerd.runsc.v1` adapters using a private shim config and write-through rootfs; see the [gVisor guide](docs/user-guide/gvisor.md).
+- Ascend 910C uses the vendor runc-v2 runtime and device plugin; see the [Ascend guide](docs/user-guide/ascend.md).
 - NVIDIA runc-v2 adapters preserve GPU allocation through CDI or the vendor runtime; see the [NVIDIA guide](docs/user-guide/nvidia.md) for driver and MIG boundaries.
 - Kata + QEMU task-shim adapters with explicit `runtime_path` and QEMU `ConfigPath`; see the [Kata guide](docs/user-guide/kata-qemu.md).
 
@@ -83,12 +84,13 @@ its verification record is published. Entries in **Not yet validated** are not s
 | --- | --- | --- | --- |
 | Baseline platform | linux/amd64; Kubernetes v1.29 series; containerd 2.1.1 (vendor build); `overlayfs`; stock `io.containerd.runc.v2`; RWO block PVC with ext4 | Functional and performance E2E; three rounds each of rootfsd, containerd-service, and node restart; ten-instance concurrent isolation; same-path single-writer exclusion; RootPV Helm upgrade/rollback | Controlled cross-major containerd migration; automatic runtime-handler cleanup after uninstall |
 | Kubernetes and containerd | Kubernetes v1.27, v1.28, v1.30 and later supported series; containerd 1.6, 1.7, 2.0, and additional 2.1 combinations | Kubernetes v1.29 + official containerd 1.6.39, 1.7.35, 2.0.12, and static 2.1.9: dynamic-PVC persistence and Pod recreation | All other listed pairings; recovery, upgrade, and performance on official builds |
-| CPU architecture and kernel | linux/arm64 and additional supported Linux kernel/distribution combinations | — | Baseline suite and OverlayFS recovery coverage |
+| CPU architecture and kernel | linux/arm64 and additional supported Linux kernel/distribution combinations | [ARM64 Ascend 910C functional cases on Linux 5.10](tests/e2e/results/ascend-910c-2026-11-11.md) | Full baseline suite and node/OverlayFS failure recovery coverage |
 | Storage | RWO block PVC with XFS | — | OverlayFS mount, persistence, and cleanup coverage |
 | runc-v2 adapters | Custom `io.containerd.runc.v2` runtimes using a non-wrapper `BinaryName` delegate | — | Adapter discovery plus lifecycle, signal, exit-code, and recovery coverage |
 | NVIDIA GPU | RTX 5090; driver 610.57.04; Toolkit 1.19.1; containerd 2.1.1; ext4 local PVC | [CDI and legacy envvar allocation, GPU compute, three persistence generations, sidecar isolation and cleanup](tests/e2e/results/nvidia-2026-11-08.md) | Other drivers and driver upgrades; MIG/vGPU/time-slicing; GDS/GDRCopy/MOFED; dynamic CSI; performance |
 | Other GPU runtimes | AMD ROCm, Intel, and MThreads | — | Device workload, persistence, cleanup, and each device-partitioning mode |
-| NPU runtimes | Ascend and other runc-v2-compatible accelerators; whole-device and virtual/partitioned modes tracked separately | — | Vendor workload, persistence, cleanup, and isolation coverage |
+| Ascend 910C | linux/arm64; Kubernetes 1.34.3 (vendor build); containerd 2.1.1; driver 25.5.6; runtime/plugin 7.3.0; CANN 8.5.0 A3; ext4 local PVC | [Physical-chip allocation, NPU compute, persistence, sidecar isolation and cleanup](tests/e2e/results/ascend-910c-2026-11-11.md) | vNPU/partitioning/sharing; CDI; HCCL; other drivers and upgrades; node failure recovery; dynamic CSI; performance |
+| Other NPU runtimes | Other runc-v2-compatible accelerators | — | Vendor workload, persistence, cleanup, and isolation coverage |
 | Kata + QEMU | Linux AMD64; Kubernetes 1.34.3; containerd 2.1.1; Kata 4.2.0 Rust; QEMU 11.0.1; ext4 local RWO PVC | [Persistence, sidecar isolation, single-writer exclusion, rootfsd restart, normal Kata and cleanup](tests/e2e/results/kata-qemu-2026-10-14.md) | Dynamic CSI PVC, node/VM failure recovery, performance and devices |
 | gVisor | Linux AMD64; Kubernetes 1.37.1; containerd 2.1.1; runsc 20261012.0; systrap; ext4 local RWO PVC | [Live Webhook/catalog, three persistence generations, sidecars, single-writer exclusion, rootfsd restart and automatic shim exit](tests/e2e/results/gvisor-online-2026-10-20.md) | Dynamic CSI, performance, devices, checkpoint, Webhook/configuration outage recovery and node/Sentry/gofer failure recovery |
 | Other independent shims | Kata CLH and shims outside the implemented adapters | Historical gVisor negative tests apply to the older implementation | Unsupported types must fail closed |
@@ -362,6 +364,18 @@ kubectl -n rootpv-test-nvidia logs nvidia-rootpv-test -c app
 
 Delete and reapply the Pod to check that the marker remains unchanged and the counter increases.
 For MIG, use the device plugin's advertised resource key; the current hardware validation covers whole GPUs.
+
+### Ascend 910C workload
+
+Use a working `ascend` RuntimeClass backed by `io.containerd.runc.v2` and the vendor runtime, then add the
+standard RootPV annotations. Request the device plugin's advertised NPU resource; a resource can represent
+a chip rather than a physical card. See the [Ascend guide](docs/user-guide/ascend.md),
+[complete local-PV YAML](tests/e2e/manifests/ascend.yaml) and [validation record](tests/e2e/results/ascend-910c-2026-11-11.md).
+RootPV does not install the driver/plugin or manage NPU partitioning.
+There is no hardcoded Ascend driver/runtime version gate or established minimum supported version.
+The tested combination is driver 25.5.6, Ascend runtime/device plugin 7.3.0, and CANN 8.5.0 A3 on
+containerd 2.1.1. Other combinations require vendor compatibility checks and RootPV lifecycle validation;
+the [guide](docs/user-guide/ascend.md#版本与未覆盖范围) also documents the 7.3.0 installer configuration caveat.
 
 ## Development
 
