@@ -1,6 +1,6 @@
 # RootPV 兼容性验证方案与矩阵
 
-**文档状态：** 持续验证与维护（2026-11-11 更新）
+**文档状态：** 持续验证与维护（2026-11-12 更新）
 
 **维护方式：** 每次验证完成后更新本表和对应的可复现测试记录；未记录证据的组合不得标记为支持。
 
@@ -85,10 +85,11 @@ device plugin 的精确版本。
 | containerd | 2.0.x | 在一个受支持 Kubernetes 版本上完整验证 | stock `io.containerd.runc.v2` | 验证中（官方 2.0.12 在 Kubernetes v1.29 完成 C04） |
 | containerd | 2.1.x | 作为当前基线持续回归 | stock `io.containerd.runc.v2` | 验证中（2.1.1（厂商构建）：基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01；官方静态 2.1.9：PVC 持久化与 Pod 重建。直接降级到 1.6.28 不可复用运行中 2.1 状态） |
 | CPU 架构 | linux/amd64 | 每个 containerd 大版本至少一个基础组合 | stock `io.containerd.runc.v2` | 验证中（Kubernetes v1.29、containerd 2.1.1（厂商构建） 基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01） |
-| CPU 架构 | linux/arm64 | Kubernetes 1.34.3（厂商构建）/containerd 2.1.1/Linux 5.10/ext4 local PVC | Ascend runc-v2 | 已验证限定功能用例，见 [910C 记录](../../tests/e2e/results/ascend-910c-2026-11-11.md)；不替代完整基线/恢复套件 |
+| CPU 架构 | linux/arm64 | Kubernetes 1.34.3（厂商构建）；910C：containerd 2.1.1/Linux 5.10/ext4 local；950DT：containerd 2.3.5/Linux 6.6/XFS local | Ascend runc-v2 | 已验证限定功能用例，见 [910C 记录](../../tests/e2e/results/ascend-910c-2026-11-11.md)与 [950DT 记录](../../tests/e2e/results/ascend-950-2026-11-12.md)；不替代完整基线/恢复套件 |
 | 操作系统/内核 | 主流发行版的 LTS 内核 | 每个新内核系列执行 OverlayFS 和恢复用例 | stock `io.containerd.runc.v2` | 待验证 |
 | OverlayFS 存储 | RWO block PVC + ext4 | 作为所有组合的首选基线 | stock `io.containerd.runc.v2` | 验证中（Kubernetes v1.29、containerd 2.1.1（厂商构建） 基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01） |
 | OverlayFS 存储 | RWO block PVC + XFS | 单独确认 XFS/OverlayFS 所需 mount 与内核能力 | stock `io.containerd.runc.v2` | 待验证 |
+| OverlayFS 存储 | Filesystem/RWO 静态 local PVC + XFS `ftype=1` | ARM64/Linux 6.6；containerd 2.3.5；Ascend 950DT | Ascend runc-v2 | 已验证限定用例：overlay 挂载、持久化、互斥和清理，见 [950DT 记录](../../tests/e2e/results/ascend-950-2026-11-12.md)；不代表动态 CSI 或故障恢复通过 |
 
 不把网络文件系统、RWX 多节点共享、非 `overlayfs` snapshotter 或 rootless 节点纳入本矩阵；它们超出
 当前范围，需要独立设计和安全评审后才可立项。
@@ -111,6 +112,7 @@ Ascend 的 runc-v2 接口条件不包含驱动/runtime 数字版本门槛；当�
 | Intel GPU | 整卡；有虚拟化切分时单列 | GPU 工作负载、RuntimeClass/handler 路径和持久化 | 中 | 待验证 |
 | MThreads GPU | 整卡；有切分能力时单列 | 厂商工作负载、adapter 路径、持久化与清理 | 中 | 待验证 |
 | Ascend NPU | 910C 非切分芯片；910/310 其他型号分别记录 | NPU 实算、原厂 hook、持久化、重建、隔离和清理 | 高 | 910C 限定组合已验证，见 [2026-11-11 记录](../../tests/e2e/results/ascend-910c-2026-11-11.md)；其他型号、版本、HCCL 和性能待验证 |
+| Ascend 950DT | ARM64；containerd 2.3.5/version 3；Linux 6.6；XFS local PVC；runtime/plugin 26.1.0；厂商 udma 参数 | 设备注入、持久化、重启、互斥及实际计算 | 高 | [限定组合验证](../../tests/e2e/results/ascend-950-2026-11-12.md)：普通 Pod 与 RootPV 实算、三代持久化、互斥及服务重启后计算通过；不覆盖在途计算恢复/HCCL |
 | Ascend NPU 切分 | 虚拟 NPU、资源切分或共享形态 | 每种切分策略独立完成整套 NPU E2E，不从非切分芯片结果推导 | 高 | 待验证 |
 | 其他 NPU/加速器 | 厂商 runtime 属于 runc-v2 BinaryName 模型 | 按“runc-v2 自定义 runtime + 设备 E2E”执行 | 中 | 待验证 |
 | Kata + QEMU（Rust） | io.containerd.kata-qemu.v2；显式 runtime_path/ConfigPath；flat-lowerdirs | task proxy 正向持久化、多容器、互斥、rootfsd 重启和清理 | 已接入，继续补全发布矩阵 | 已验证（限定用例）：Kata 4.2.0 / QEMU 11.0.1 / ext4 local PVC，见结果记录 |

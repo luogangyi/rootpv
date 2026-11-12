@@ -1,5 +1,9 @@
 # RootPV Runtime Adapter 自动发现与配置生成设计
 
+> **2026-11-12 更新：** Ascend 950DT 同样复用现有 runc-v2 adapter，无需新增 Go 分支。
+> 宿主按厂商方案配置 udma 并重启后，已完成实际计算、持久化、服务重启后计算和 Webhook/catalog 验证，
+> 见 [950DT 记录](../../tests/e2e/results/ascend-950-2026-11-12.md)；不外推到其他型号、vNPU 或 HCCL。
+
 > **2026-11-11 更新：** Ascend 910C 复用现有 runc-v2 发现、shadow handler 和 OCI 委托链。
 > NPU 分配和原厂 hook 由 device plugin/runtime 负责，不增加芯片 ID 或驱动版本解析。
 > containerd v3 与 plugin 部署前提见 [Ascend 指南](../user-guide/ascend.md)，

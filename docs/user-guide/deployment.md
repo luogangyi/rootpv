@@ -103,6 +103,7 @@ node-agent 的 `/host` 挂载只读；containerd 配置、`/etc/rootpv` 和 wrap
 准备当前代码构建的镜像；ARM64 节点需要 ARM64 或多架构镜像。复制清单到本地发布目录，
 把所有 `rootpv:latest` 替换成已推送的镜像标签。核对 DaemonSet 的宿主路径、
 `allowedOverlaySnapshotRoots` 和 `--containerd-restart-command`；默认重启命令要求宿主使用 systemd。
+非 systemd 宿主必须先替换该参数，并验证实际加载了新 runtime handler，再部署业务 Pod。
 
 先应用 namespace、RBAC、ConfigMap 和 Service，准备 TLS 后再启用 Webhook：
 
@@ -237,13 +238,17 @@ containerd 原生 CDI 也可使用节点默认 adapter。RootPV 保留设备分�
 接入步骤、CDI/legacy 区别、自定义节点路径和驱动升级边界见 [NVIDIA 指南](nvidia.md)，
 整卡实测结果见 [验证记录](../../tests/e2e/results/nvidia-2026-11-08.md)。
 
-## Ascend 910C 接入
+## Ascend 接入
 
 先验证原厂 runtime/device plugin 下的普通 NPU 计算，再用当前 Chart 或 `deploy/manifests` 自动发现 `ascend` runc-v2 handler。
 ARM64 节点使用匹配架构的 RootPV 镜像；业务保留源 RuntimeClass 并添加 RootPV 注解。
 containerd v3 配置、plugin 自身 RuntimeClass、芯片分配单位和版本边界见 [Ascend 指南](ascend.md)，
 可复用 [完整 local PV 清单](../../tests/e2e/manifests/ascend.yaml)。
-RootPV 不额外限定驱动/runtime 的数字版本；目前仅验证驱动 25.5.6、runtime/plugin 7.3.0、
+RootPV 不额外限定驱动/runtime 的数字版本；910C 已验证驱动 25.5.6、runtime/plugin 7.3.0、
 CANN 8.5.0 A3 与 containerd 2.1.1。该组合不是最低版本要求，其他组合和升级路径须单独验收。
 安装器执行成功不代表 handler 配置正确：核对生效配置为 `io.containerd.runc.v2`，并确认 plugin
 实际通过 Ascend runtime 分配设备，详情见 [版本要求](ascend.md#版本与未覆盖范围)。
+
+950DT 继续使用相同 runc-v2 接入方式；准备 26.1.0 plugin 的 UMDK、实际 socket 路径和资源键，
+见 [950 接入说明](ascend.md#950dt-接入与当前验证状态)与 [诊断 YAML](../../tests/e2e/manifests/ascend-950.yaml)。
+本环境按厂商方案配置 `udma` 并重启后完成实际计算与 RootPV 生命周期验证，见 [950 记录](../../tests/e2e/results/ascend-950-2026-11-12.md)；该参数配置不由 RootPV 自动修改。

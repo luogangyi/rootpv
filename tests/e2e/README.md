@@ -135,7 +135,7 @@ adapter ID 为 runsc-v1。先按 [gVisor 指南](../../docs/user-guide/gvisor.md
 三代重建、独立校验拒绝和 shim 自动退出。初次 [隔离记录](results/gvisor-2026-10-20.md)使用离线准入，
 保留其历史边界；[分组定位记录](results/gvisor-shim-lifecycle-2026-10-20.md)说明闲置 shim 的原因。
 
-## Ascend 910C 测试
+## Ascend 910C / 950 测试
 
 [manifests/ascend.yaml](manifests/ascend.yaml) 包含静态 local PV、NPU app 和无设备 sidecar。
 按 [Ascend 指南](../../docs/user-guide/ascend.md) 替换节点并准备原厂 runtime/plugin、兼容的 A3 镜像。
@@ -144,3 +144,8 @@ adapter ID 为 runsc-v1。先按 [gVisor 指南](../../docs/user-guide/gvisor.md
 已验证版本与未覆盖范围见 [910C 结果](results/ascend-910c-2026-11-11.md)。
 更换驱动、runtime 或 plugin 后，不以版本号更高作为通过依据；重新执行同组合的普通 NPU 对照、
 RootPV 计算、持久化重建、隔离与清理用例。当前记录不定义最低支持版本，也不覆盖驱动升级路径。
+
+950 使用 [manifests/ascend-950.yaml](manifests/ascend-950.yaml)，资源键和镜像与 910C 不同。
+本环境按厂商方案配置 `udma` 并重启后，普通 Pod 与 RootPV 的实际计算、三代持久化、
+单写互斥及 rootfsd/containerd 重启后的计算通过，详见 [950 结果](results/ascend-950-2026-11-12.md)。
+其他环境仍须先验证普通 Pod，再执行 RootPV 用例；该配置不代表所有 950 或 UMDK 版本的通用要求。
