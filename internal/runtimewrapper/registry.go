@@ -35,6 +35,7 @@ type AdapterRegistry struct {
 }
 
 type ResolvedRuntimeAdapter struct {
+	Retired              bool                      `yaml:"retired,omitempty"`
 	Mode                 config.RuntimeAdapterMode `yaml:"mode"`
 	SourceHandler        string                    `yaml:"sourceHandler"`
 	RootfsRuntimeClass   string                    `yaml:"rootpvRuntimeClass"`

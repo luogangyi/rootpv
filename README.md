@@ -2,7 +2,7 @@
 
 [中文文档](README_ZH.md) · [Contributing](CONTRIBUTING.md) · [License](LICENSE)
 
-RootPV preserves a Kubernetes container's writable root filesystem on a PersistentVolumeClaim (PVC). It keeps the container image layers immutable and managed by the stock containerd `overlayfs` snapshotter, while storing only the writable OverlayFS delta on the PVC.
+RootPV preserves a Kubernetes container's writable root filesystem on a PersistentVolumeClaim (PVC). It keeps the container image layers immutable and managed by the selected CRI backend (containerd `overlayfs`, or CRI-O + runc `containers/storage` overlay), while storing only the writable OverlayFS delta on the PVC.
 
 It is intended for development workspaces, AI/ML environments, interactive notebooks, and long-running initialization workloads whose in-container changes must survive Pod recreation.
 
@@ -17,7 +17,7 @@ Pod annotations + PVC
 Admission controller -- selects a RootPV RuntimeClass and mounts the PVC anchor
           |
           v
-stock containerd overlayfs snapshotter -- provides immutable image lower layers
+containerd snapshotter / CRI-O storage helper -- resolves immutable image layers
           |
           v
 RootPV runtime adapter -- OCI wrapper (runc-v2) or task shim proxy (Kata + QEMU)
@@ -32,13 +32,14 @@ RootPV consists of:
 - `persistent-rootfsd`: a node DaemonSet that resolves PVC mounts, manages metadata, and holds a single-writer lease.
 - `rootfs-runtime-wrapper`: prepares the OverlayFS root filesystem before delegating to the real OCI runtime.
 - `containerd-shim-rootpv-kata-v2`: proxies Kata + QEMU task creation and deletion for persistent root filesystems.
+- `rootpv-crio-storage`: resolves CRI-O image layers and holds image references for active persistent root filesystems.
 - Helm chart and Kubernetes manifests for installation.
 
-RootPV uses public Kubernetes, containerd, OCI runtime-spec, and Linux VFS interfaces. It does not patch, replace, or fork containerd, and it does not manage containerd image or snapshot garbage collection.
+RootPV uses Kubernetes, the selected CRI backend, OCI runtime-spec, and Linux VFS interfaces. It does not patch, replace, or fork containerd, and it does not manage containerd image or snapshot garbage collection.
 
 ## Current scope and limitations
 
-- Linux nodes using stock containerd and its `overlayfs` snapshotter.
+- Linux nodes using stock containerd and its `overlayfs` snapshotter; CRI-O + runc support is described separately below.
 - PVC-backed, single-writer persistent root filesystems.
 - Strict base-image identity checking to prevent accidental reuse with an incompatible image.
 - Runtime adapters for `io.containerd.runc.v2`-based runtimes, including device-specific runtimes when the node runtime is already installed and discovered.
@@ -47,7 +48,9 @@ RootPV uses public Kubernetes, containerd, OCI runtime-spec, and Linux VFS inter
 - NVIDIA runc-v2 adapters preserve GPU allocation through CDI or the vendor runtime; see the [NVIDIA guide](docs/user-guide/nvidia.md) for driver and MIG boundaries.
 - Kata + QEMU task-shim adapters with explicit `runtime_path` and QEMU `ConfigPath`; see the [Kata guide](docs/user-guide/kata-qemu.md).
 
-The following are out of scope: non-containerd runtimes, non-`overlayfs` snapshotters, rootless or unprivileged node installation, shared read/write use of one root filesystem, automatic rebase/reset across image chains, and converting a writable layer into an OCI image.
+CRI-O support in this branch targets **unmodified official CRI-O + conmon + runc**. It uses a dedicated storage helper and controlled daemon restart without maintaining a CRI-O fork. CRI-O + Kata/gVisor experiments are isolated on the [`cri-o-with-kata-and-gvisor` branch](https://gitcode.com/luogangyi/rootpv/tree/cri-o-with-kata-and-gvisor). Existing containerd runtime support keeps its documented scope. See the [CRI-O guide](docs/user-guide/cri-o.md) and [validation results](tests/e2e/results/cri-o-runc-2026-11-16.md).
+
+The following are out of scope: CRI backends other than containerd/CRI-O, non-OverlayFS storage, rootless or unprivileged node installation, shared read/write use of one root filesystem, automatic rebase/reset across image chains, and converting a writable layer into an OCI image.
 
 The full end-to-end baseline currently covers a Linux x86_64 Kubernetes v1.29-series cluster with
 containerd 2.1.1 (vendor build), an `io.containerd.runc.v2` runtime, and dynamically provisioned ReadWriteOnce
@@ -84,6 +87,7 @@ its verification record is published. Entries in **Not yet validated** are not s
 | --- | --- | --- | --- |
 | Baseline platform | linux/amd64; Kubernetes v1.29 series; containerd 2.1.1 (vendor build); `overlayfs`; stock `io.containerd.runc.v2`; RWO block PVC with ext4 | Functional and performance E2E; three rounds each of rootfsd, containerd-service, and node restart; ten-instance concurrent isolation; same-path single-writer exclusion; RootPV Helm upgrade/rollback | Controlled cross-major containerd migration; automatic runtime-handler cleanup after uninstall |
 | Kubernetes and containerd | Kubernetes v1.27, v1.28, v1.30 and later supported series; containerd 1.6, 1.7, 2.0, and additional 2.1 combinations | Kubernetes v1.29 + official containerd 1.6.39, 1.7.35, 2.0.12, and static 2.1.9: dynamic-PVC persistence and Pod recreation | All other listed pairings; recovery, upgrade, and performance on official builds |
+| CRI-O + runc | Linux AMD64; Kubernetes 1.37; official CRI-O 1.37.3; runc 1.5.2; local PVC and serial EBS | [Functional validation and containerd regression results](tests/e2e/results/cri-o-runc-2026-11-16.md) | Other versions, SELinux, userns, devices, cross-CRI migration and performance |
 | CPU architecture and kernel | linux/arm64 and additional supported Linux kernel/distribution combinations | Ascend functional cases: [910C on Linux 5.10](tests/e2e/results/ascend-910c-2026-11-11.md), [950DT on Linux 6.6](tests/e2e/results/ascend-950-2026-11-12.md) | Full baseline suite and node/OverlayFS failure recovery coverage |
 | Storage | RWO block PVC with XFS | — | OverlayFS mount, persistence, and cleanup coverage |
 | Storage (static local) | Filesystem/RWO local PVC on XFS with `ftype=1` | [950DT overlay mount, persistence, single-writer exclusion and cleanup](tests/e2e/results/ascend-950-2026-11-12.md) | Dynamic CSI, failure recovery and performance |
@@ -106,6 +110,8 @@ RootPV keys and API groups use openfuyao.cn. For an existing installation, follo
 [domain migration guide](docs/user-guide/domain-migration.md) before updating components or workloads.
 The new domain passed [limited runc/Kata cluster smoke tests](tests/e2e/results/domain-smoke-2026-10-14.md)
 on Kubernetes v1.37.1 with ext4 local PVCs; the record does not establish full platform compatibility.
+
+The examples below use the default containerd backend. For CRI-O, use the [CRI-O installation values](docs/user-guide/cri-o.md#安装参数), build an image containing the storage helper, and keep node-agent selectors disjoint. Neither the Chart nor the image switches kubelet to another CRI.
 
 ### Prerequisites
 

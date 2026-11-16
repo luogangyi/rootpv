@@ -62,12 +62,16 @@ func SaveSpec(bundle string, spec *specs.Spec) error {
 	return writeFileAtomic(tmp, path, data, 0o644)
 }
 
+func SandboxID(spec *specs.Spec) string {
+	return labelValue(specAnnotations(spec), "io.kubernetes.sandbox.id", "io.kubernetes.cri.sandbox-id", "io.kubernetes.cri-o.SandboxID")
+}
+
 func IsSandbox(spec *specs.Spec) bool {
 	annotations := specAnnotations(spec)
 	if labelValue(annotations, "io.kubernetes.cri.container-name", "io.kubernetes.container.name") == "POD" {
 		return true
 	}
-	return labelValue(annotations, "io.kubernetes.container.type", "io.kubernetes.cri.container-type") == "sandbox" ||
+	return labelValue(annotations, "io.kubernetes.container.type", "io.kubernetes.cri.container-type", "io.kubernetes.cri-o.ContainerType") == "sandbox" ||
 		labelValue(annotations, "io.cri-containerd.kind") == "sandbox" ||
 		strings.EqualFold(labelValue(annotations, "container-type"), "sandbox")
 }
@@ -129,9 +133,9 @@ func BuildResolveRequest(spec *specs.Spec, inv Invocation) (apiv1alpha1.ResolveR
 		PodName:          labelValue(annotations, "io.kubernetes.pod.name", "io.kubernetes.cri.sandbox-name"),
 		PodUID:           labelValue(annotations, "io.kubernetes.pod.uid", "io.kubernetes.cri.sandbox-uid"),
 		ContainerName:    labelValue(annotations, "io.kubernetes.container.name", "io.kubernetes.cri.container-name"),
-		SandboxID:        labelValue(annotations, "io.kubernetes.sandbox.id", "io.kubernetes.cri.sandbox-id"),
-		Image:            labelValue(annotations, "io.kubernetes.cri.image-name"),
-		ImageID:          labelValue(annotations, "containerd.io/snapshot/cri.image-ref", "cri.image-ref"),
+		SandboxID:        SandboxID(spec),
+		Image:            labelValue(annotations, "io.kubernetes.cri.image-name", "io.kubernetes.cri-o.ImageName"),
+		ImageID:          labelValue(annotations, "containerd.io/snapshot/cri.image-ref", "cri.image-ref", "io.kubernetes.cri-o.ImageRef"),
 		Labels:           annotations,
 		Annotations:      annotations,
 	}

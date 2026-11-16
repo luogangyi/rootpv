@@ -1,14 +1,20 @@
 # RootPV 集群 E2E 测试
 
-本目录包含已部署 RootPV 集群的功能与性能脚本，以及 Kata + QEMU、gVisor、NVIDIA、Ascend 的完整手工测试清单。
+本目录包含已部署 RootPV 集群的功能与性能脚本，以及 Kata + QEMU、gVisor、NVIDIA、Ascend、CRI-O 的手工测试清单。
 脚本通过 SSH 在控制面执行 kubectl，开发机无需保存 kubeconfig。
 测试记录按运行时、存储和版本组合分别解释，不能由一个组合推导全部 runtime 支持。
+
+CRI-O 使用 [部署指南](../../docs/user-guide/cri-o.md) 和 [完整清单](manifests/cri-o.yaml)。
+[在线验收记录](results/cri-o-runc-2026-11-16.md) 记录官方 CRI-O + runc 的完整流程和 containerd 回归。
+本分支不安装或依赖上游诊断补丁；CRI-O + Kata/gVisor 在独立实验分支维护。
+现有 containerd 脚本不能只换 socket 后当作 CRI-O 验收，需检查 storage helper、引用与回收。
+EBS PVC 按创建、重建、删除顺序串行测试；无 GPU/NPU 的环境不计硬件用例通过。
 
 ## 前提和配置
 
 - Controller、node-agent 与具体 adapter 的就绪标签均可用。
 - 原 runtime 能独立运行普通 Pod；Kata 已安装 QEMU、可用的 guest kernel 和共享文件系统。
-- 测试节点能拉取镜像，或 containerd 已缓存同一测试镜像。
+- 测试节点能拉取镜像，或所选 CRI 后端已缓存同一测试镜像。
 - 自动化脚本使用可动态供给的 Filesystem + ReadWriteOnce 块 PVC；手工 Kata 清单另用静态 local PV。
 - 文件系统适合 OverlayFS upper/work；存储策略 ConfigMap 的类名配置不等于已实现的强制准入或后端验证。
 

@@ -2,7 +2,7 @@
 
 [English](README.md) · [贡献指南](CONTRIBUTING.md) · [许可证](LICENSE)
 
-RootPV 为 Kubernetes 容器提供可持久化的可写根文件系统。它将 OverlayFS 的可写增量层保存到 PersistentVolumeClaim（PVC），同时继续由原生 containerd `overlayfs` snapshotter 管理不可变镜像层。
+RootPV 为 Kubernetes 容器提供可持久化的可写根文件系统。它将 OverlayFS 的可写增量层保存到 PersistentVolumeClaim（PVC），同时由选定的 CRI 后端管理不可变镜像层：默认使用 containerd `overlayfs` snapshotter，CRI-O + runc 接入使用 `containers/storage` overlay。
 
 它适用于需要在 Pod 重建后保留容器内改动的开发工作空间、AI/ML 环境、交互式 Notebook，以及初始化耗时较长的工作负载。
 
@@ -17,7 +17,7 @@ Pod annotations + PVC
 准入控制器 -- 选择 RootPV RuntimeClass，并注入 PVC anchor mount
           |
           v
-原生 containerd overlayfs snapshotter -- 提供不可变镜像 lower layers
+containerd snapshotter / CRI-O storage helper -- 解析不可变镜像层
           |
           v
 RootPV runtime adapter -- runc-v2 使用 OCI wrapper，Kata + QEMU 使用 task shim proxy
@@ -32,13 +32,14 @@ RootPV 包含以下组件：
 - `persistent-rootfsd`：以 DaemonSet 运行，解析 PVC 挂载、管理元数据并持有单写租约。
 - `rootfs-runtime-wrapper`：在调用真实 OCI runtime 前准备 OverlayFS 根文件系统。
 - `containerd-shim-rootpv-kata-v2`：代理 Kata + QEMU 的 task 创建和删除，接入持久化根文件系统。
+- `rootpv-crio-storage`：解析 CRI-O 镜像层，为活跃持久根目录保留镜像引用。
 - 用于部署的 Helm Chart 和 Kubernetes manifests。
 
-RootPV 仅使用 Kubernetes、containerd、OCI runtime-spec 和 Linux VFS 的公开接口。它不会 patch、替换或 fork containerd，也不接管 containerd 的镜像和 snapshot 垃圾回收。
+RootPV 使用 Kubernetes、选定 CRI 后端、OCI runtime-spec 和 Linux VFS 接口。它不会 patch、替换或 fork containerd，也不接管 containerd 的镜像和 snapshot 垃圾回收。
 
 ## 当前范围与限制
 
-- 使用原生 containerd `overlayfs` snapshotter 的 Linux 节点。
+- 使用原生 containerd `overlayfs` snapshotter 的 Linux 节点；CRI-O + runc 接入见下文。
 - 基于 PVC 的单写持久根文件系统。
 - 严格校验基础镜像身份，防止将已有可写层意外复用到不兼容镜像。
 - 基于 `io.containerd.runc.v2` 的 runtime adapter；节点已正确安装且可发现的设备专用 runtime 也可接入。
@@ -47,7 +48,9 @@ RootPV 仅使用 Kubernetes、containerd、OCI runtime-spec 和 Linux VFS 的公
 - NVIDIA runc-v2 adapter 保留 CDI 或原厂 runtime 的 GPU 注入；驱动与 MIG 边界见 [NVIDIA 指南](docs/user-guide/nvidia.md)。
 - Kata + QEMU task-shim adapter；源 handler 需显式配置 `runtime_path` 和 QEMU `ConfigPath`，见 [Kata 使用指南](docs/user-guide/kata-qemu.md)。
 
-当前范围不包括：非 containerd 运行时、非 `overlayfs` snapshotter、rootless 或非特权节点安装、一个根文件系统的读写共享、跨镜像链自动 Reset/Rebase，以及将可写层自动转换为 OCI 镜像。
+本分支的 CRI-O 范围是 **未修改的官方 CRI-O + conmon + runc**，通过独立 storage helper 和受控服务重启完成接入，不维护 CRI-O fork。CRI-O + Kata/gVisor 实验保留在独立的 [`cri-o-with-kata-and-gvisor` 分支](https://gitcode.com/luogangyi/rootpv/tree/cri-o-with-kata-and-gvisor)。现有 containerd runtime 支持保持原有范围。部署与兼容边界见 [CRI-O 指南](docs/user-guide/cri-o.md)，逐项结果见 [验证记录](tests/e2e/results/cri-o-runc-2026-11-16.md)。
+
+当前范围不包括：containerd/CRI-O 之外的 CRI 后端、非 OverlayFS 存储、rootless 或非特权节点安装、一个根文件系统的读写共享、跨镜像链自动 Reset/Rebase，以及将可写层自动转换为 OCI 镜像。
 
 完整端到端基线覆盖 Linux x86_64、Kubernetes v1.29 系列、containerd 2.1.1（厂商构建）、
 `io.containerd.runc.v2` 运行时，以及动态供给的 ReadWriteOnce 块存储 PVC。在相同平台上，官方
@@ -81,6 +84,7 @@ CDI 与 legacy envvar 分配均通过 GPU 实算、三代持久化重建、sidec
 | --- | --- | --- | --- |
 | 基线平台 | linux/amd64；Kubernetes v1.29 系列；containerd 2.1.1（厂商构建）；`overlayfs`；原生 `io.containerd.runc.v2`；ext4 的 RWO 块存储 PVC | 功能和性能 E2E；rootfsd、containerd 服务和节点重启各连续 3 轮；10 实例并发隔离；同路径单写互斥；RootPV Helm 升级/回滚 | 跨 containerd 大版本的受控迁移；卸载后自动清理节点 runtime handler |
 | Kubernetes 与 containerd | Kubernetes v1.27、v1.28、v1.30 及后续受支持系列；containerd 1.6、1.7、2.0 和其他 2.1 组合 | Kubernetes v1.29 + 官方 containerd 1.6.39、1.7.35、2.0.12 和静态 2.1.9：动态 PVC 持久化与 Pod 重建 | 其他全部配对；官方构建上的恢复、升级和性能 |
+| CRI-O + runc | Linux AMD64；Kubernetes 1.37；官方 CRI-O 1.37.3；runc 1.5.2；local PVC 与串行 EBS | [功能验收与 containerd 回归记录](tests/e2e/results/cri-o-runc-2026-11-16.md) | 其他版本、SELinux、userns、设备、跨 CRI 迁移和性能 |
 | CPU 架构与内核 | linux/arm64 及其他受支持的 Linux 内核/发行版组合 | Ascend 功能用例：[Linux 5.10 上的 910C](tests/e2e/results/ascend-910c-2026-11-11.md)、[Linux 6.6 上的 950DT](tests/e2e/results/ascend-950-2026-11-12.md) | 完整基线套件、节点/OverlayFS 故障恢复 |
 | 存储 | XFS 的 RWO 块存储 PVC | — | OverlayFS 挂载、持久化和清理覆盖 |
 | 存储（静态 local） | XFS `ftype=1` 的 Filesystem/RWO local PVC | [950DT overlay 挂载、持久化、单写互斥和清理](tests/e2e/results/ascend-950-2026-11-12.md) | 动态 CSI、故障恢复和性能 |
@@ -102,6 +106,8 @@ RootPV 的协议键与 API group 使用 openfuyao.cn。已有安装升级前，�
 [域名迁移指南](docs/user-guide/domain-migration.md)，同步更新组件、节点配置和业务 YAML。
 新域名已在 Kubernetes v1.37.1、ext4 local PVC 上通过 [runc/Kata 限定冒烟](tests/e2e/results/domain-smoke-2026-10-14.md)，
 该记录不代表完成整个平台兼容性验证。
+
+以下安装示例默认使用 containerd。CRI-O 请使用 [专用安装参数](docs/user-guide/cri-o.md#安装参数)，构建含 storage helper 的镜像，并通过互不重叠的节点选择器部署 agent。Chart 和镜像不会切换 kubelet 使用的 CRI。
 
 ### 前提条件
 

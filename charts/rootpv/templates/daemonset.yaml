@@ -31,16 +31,29 @@ spec:
         - |
           install -d -m 0755 /host/usr/local/bin /host/etc/rootpv
           install -m 0755 /usr/local/bin/rootfs-runtime-wrapper /host/usr/local/bin/rootfs-runtime-wrapper
+          {{- if eq .Values.nodeAgent.runtimeProvider "cri-o" }}
+          install -m 0755 /usr/local/bin/rootpv-crio-storage /host/usr/local/bin/rootpv-crio-storage
+          {{- else }}
           install -m 0755 /usr/local/bin/containerd-shim-rootpv-kata-v2 /host/usr/local/bin/containerd-shim-rootpv-kata-v2
+          {{- end }}
           cat >/host/etc/rootpv/rootfs-runtime-wrapper.yaml <<EOF
-          rootfsdSocket: /run/persistent-rootfsd/rootfsd.sock
-          runtimeRoot: /run/rootpv/rootfs
+          runtimeProvider: {{ .Values.nodeAgent.runtimeProvider }}
+          {{- if eq .Values.nodeAgent.runtimeProvider "cri-o" }}
+          crioSocket: {{ .Values.nodeAgent.crio.socket }}
+          crioSourceRoot: {{ .Values.nodeAgent.crio.sourceRoot }}
+          {{- end }}
+          rootfsdSocket: {{ .Values.nodeAgent.rootfsdSocket }}
+          runtimeRoot: {{ .Values.nodeAgent.runtimeRoot }}
           overlayMode: {{ .Values.nodeAgent.overlayMode }}
           containerdAddress: {{ .Values.nodeAgent.containerdAddress }}
           containerdNamespace: {{ .Values.nodeAgent.containerdNamespace }}
           allowedOverlaySnapshotRoots:
+          {{- if eq .Values.nodeAgent.runtimeProvider "cri-o" }}
+            - {{ .Values.nodeAgent.crio.storageRoot }}/overlay
+          {{- else }}
           {{- range .Values.nodeAgent.allowedOverlaySnapshotRoots }}
             - {{ . }}
+          {{- end }}
           {{- end }}
           runtimeAdapterCutover: true
           runtimeAdapterRegistry: /etc/rootpv/rootpv-runtime-adapters.yaml
@@ -67,9 +80,19 @@ spec:
         - --kubelet-root={{ .Values.nodeAgent.kubeletRoot }}
         - --rootfsd-socket={{ .Values.nodeAgent.rootfsdSocket }}
         - --runtime-root={{ .Values.nodeAgent.runtimeRoot }}
+        - --runtime-provider={{ .Values.nodeAgent.runtimeProvider }}
+        {{- if eq .Values.nodeAgent.runtimeProvider "cri-o" }}
+        - --crio-socket={{ .Values.nodeAgent.crio.socket }}
+        - --crio-source-root={{ .Values.nodeAgent.crio.sourceRoot }}
+        {{- end }}
         {{- if .Values.runtimeAdapterDiscovery.enabled }}
         - --runtime-adapter-discovery=true
+        {{- if eq .Values.nodeAgent.runtimeProvider "cri-o" }}
+        - --crio-drop-in=/host{{ .Values.nodeAgent.crio.configDir }}/99-rootpv.conf
+        - {{ printf "--crio-restart-command=%s" .Values.nodeAgent.crio.restartCommand | quote }}
+        {{- else }}
         - --containerd-config=/host/etc/containerd/config.toml
+        {{- end }}
         - --host-root=/host
         - --runtime-adapter-registry=/host/etc/rootpv/rootpv-runtime-adapters.yaml
         - {{ printf "--containerd-restart-command=%s" .Values.nodeAgent.runtimeConfigurator.restartCommand | quote }}
@@ -110,24 +133,40 @@ spec:
         - name: kubelet
           mountPath: {{ .Values.nodeAgent.kubeletRoot }}
           mountPropagation: HostToContainer
+        {{- if eq .Values.nodeAgent.runtimeProvider "cri-o" }}
+        - name: crio-run
+          mountPath: {{ dir .Values.nodeAgent.crio.socket }}
+        - name: crio-storage
+          mountPath: {{ .Values.nodeAgent.crio.storageRoot }}
+          mountPropagation: HostToContainer
+        - name: crio-storage-run
+          mountPath: {{ .Values.nodeAgent.crio.runRoot }}
+        - name: crio-sources
+          mountPath: {{ .Values.nodeAgent.crio.sourceRoot }}
+        - name: crio-config
+          mountPath: /host{{ .Values.nodeAgent.crio.configDir }}
+        {{- else }}
         - name: containerd-run
           mountPath: /run/containerd
         - name: containerd-lib
           mountPath: /var/lib/containerd
           mountPropagation: Bidirectional
+        {{- end }}
         - name: rootfsd-run
-          mountPath: /run/persistent-rootfsd
+          mountPath: {{ dir .Values.nodeAgent.rootfsdSocket }}
           mountPropagation: Bidirectional
         - name: runtime-root
-          mountPath: /run/rootpv/rootfs
+          mountPath: {{ .Values.nodeAgent.runtimeRoot }}
           mountPropagation: Bidirectional
+        {{- if ne .Values.nodeAgent.runtimeProvider "cri-o" }}
         - name: containerd-etc
           mountPath: /etc/containerd
+        - name: containerd-etc
+          mountPath: /host/etc/containerd
+        {{- end }}
         - name: host-root
           mountPath: /host
           readOnly: true
-        - name: containerd-etc
-          mountPath: /host/etc/containerd
         - name: host-etc-rootpv
           mountPath: /host/etc/rootpv
         - name: host-usr-bin
@@ -161,6 +200,7 @@ spec:
         hostPath:
           path: {{ .Values.nodeAgent.hostPaths.kubelet }}
           type: Directory
+      {{- if ne .Values.nodeAgent.runtimeProvider "cri-o" }}
       - name: containerd-run
         hostPath:
           path: {{ .Values.nodeAgent.hostPaths.containerdRun }}
@@ -169,6 +209,28 @@ spec:
         hostPath:
           path: {{ .Values.nodeAgent.hostPaths.containerdLib }}
           type: Directory
+      {{- else }}
+      - name: crio-run
+        hostPath:
+          path: {{ dir .Values.nodeAgent.crio.socket }}
+          type: Directory
+      - name: crio-storage
+        hostPath:
+          path: {{ .Values.nodeAgent.crio.storageRoot }}
+          type: Directory
+      - name: crio-storage-run
+        hostPath:
+          path: {{ .Values.nodeAgent.crio.runRoot }}
+          type: Directory
+      - name: crio-sources
+        hostPath:
+          path: {{ .Values.nodeAgent.crio.sourceRoot }}
+          type: DirectoryOrCreate
+      - name: crio-config
+        hostPath:
+          path: {{ .Values.nodeAgent.crio.configDir }}
+          type: Directory
+      {{- end }}
       - name: rootfsd-run
         hostPath:
           path: {{ .Values.nodeAgent.hostPaths.rootfsdRun }}
@@ -193,10 +255,12 @@ spec:
         hostPath:
           path: {{ .Values.nodeAgent.hostPaths.etcRootpv }}
           type: DirectoryOrCreate
+      {{- if ne .Values.nodeAgent.runtimeProvider "cri-o" }}
       - name: containerd-etc
         hostPath:
           path: {{ .Values.nodeAgent.hostPaths.containerdEtc }}
           type: Directory
+      {{- end }}
       - name: host-proc
         hostPath:
           path: {{ .Values.nodeAgent.hostPaths.proc }}

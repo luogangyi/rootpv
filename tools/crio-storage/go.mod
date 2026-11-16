@@ -1,0 +1,35 @@
+module gitcode.com/openFuyao/rootpv/tools/crio-storage
+
+go 1.25.0
+
+require (
+	github.com/opencontainers/go-digest v1.0.0
+	github.com/opencontainers/image-spec v1.1.1
+	go.podman.io/storage v1.63.0
+)
+
+require (
+	cyphar.com/go-pathrs v0.2.4 // indirect
+	github.com/BurntSushi/toml v1.6.0 // indirect
+	github.com/cyphar/filepath-securejoin v0.6.1 // indirect
+	github.com/docker/go-units v0.5.0 // indirect
+	github.com/google/go-intervals v0.0.2 // indirect
+	github.com/google/uuid v1.6.0 // indirect
+	github.com/json-iterator/go v1.1.12 // indirect
+	github.com/klauspost/compress v1.18.6 // indirect
+	github.com/klauspost/pgzip v1.2.6 // indirect
+	github.com/mistifyio/go-zfs/v4 v4.0.0 // indirect
+	github.com/moby/sys/capability v0.4.0 // indirect
+	github.com/moby/sys/mountinfo v0.7.2 // indirect
+	github.com/moby/sys/user v0.4.0 // indirect
+	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
+	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
+	github.com/opencontainers/runtime-spec v1.3.0 // indirect
+	github.com/opencontainers/selinux v1.14.1 // indirect
+	github.com/sirupsen/logrus v1.9.4 // indirect
+	github.com/tchap/go-patricia/v2 v2.3.3 // indirect
+	github.com/ulikunitz/xz v0.5.15 // indirect
+	github.com/vbatts/tar-split v0.12.3 // indirect
+	golang.org/x/sync v0.20.0 // indirect
+	golang.org/x/sys v0.44.0 // indirect
+)

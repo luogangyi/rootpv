@@ -26,6 +26,8 @@ import (
 )
 
 type SourceOverlay struct {
+	Provider      string
+	BootstrapDir  string
 	Snapshotter   string
 	SnapshotKey   string
 	RootfsChainID string

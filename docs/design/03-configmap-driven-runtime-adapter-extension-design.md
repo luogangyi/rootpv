@@ -1,5 +1,9 @@
 # RootPV Runtime Adapter 自动发现与配置生成设计
 
+> **2026-11-16 更新：** [CRI-O 适配设计](07-cri-o-runtime-adapter-design.md) 增加独立的配置发现、
+> containers/storage 镜像来源和 CRI 状态恢复。下文 containerd 配置仍只适用于该后端；
+> 本分支 CRI-O 仅支持官方 CRI-O + conmon + runc，范围以新设计和验收记录为准。
+
 > **2026-11-12 更新：** Ascend 950DT 同样复用现有 runc-v2 adapter，无需新增 Go 分支。
 > 宿主按厂商方案配置 udma 并重启后，已完成实际计算、持久化、服务重启后计算和 Webhook/catalog 验证，
 > 见 [950DT 记录](../../tests/e2e/results/ascend-950-2026-11-12.md)；不外推到其他型号、vNPU 或 HCCL。

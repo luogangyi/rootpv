@@ -74,6 +74,15 @@ func InspectAndValidateSourceOverlay(r io.Reader, target string, api SourceOverl
 	if err != nil {
 		return SourceOverlay{}, err
 	}
+	if api.Provider == "cri-o" {
+		for i, path := range kernel.LowerDirs {
+			resolved, err := filepath.EvalSymlinks(path)
+			if err != nil {
+				return SourceOverlay{}, err
+			}
+			kernel.LowerDirs[i] = resolved
+		}
+	}
 	if !equalPaths(kernel.LowerDirs, api.LowerDirs) || filepath.Clean(kernel.UpperDir) != filepath.Clean(api.UpperDir) || filepath.Clean(kernel.WorkDir) != filepath.Clean(api.WorkDir) {
 		return SourceOverlay{}, fmt.Errorf("source_mount_api_mismatch: kernel lower=%v upper=%q work=%q, API lower=%v upper=%q work=%q",
 			kernel.LowerDirs, kernel.UpperDir, kernel.WorkDir, api.LowerDirs, api.UpperDir, api.WorkDir)
@@ -94,6 +103,12 @@ func ValidateSourceOverlay(api SourceOverlay, allowedRoots []string) error {
 		if err := validateSnapshotDir(path, allowedRoots); err != nil {
 			return err
 		}
+	}
+	if api.Provider == "cri-o" {
+		if api.BootstrapDir == "" {
+			return fmt.Errorf("CRI-O bootstrap layer is required")
+		}
+		return nil
 	}
 	entries, err := os.ReadDir(api.UpperDir)
 	if err != nil {
@@ -196,6 +211,9 @@ func parseOverlayLowerdirs(value, upper string) ([]string, error) {
 		path, err := decodeMountInfoField(encoded)
 		if err != nil || path == "" {
 			return nil, fmt.Errorf("source_overlay_options_invalid: invalid lowerdir %q", encoded)
+		}
+		if !filepath.IsAbs(path) && strings.HasPrefix(path, "l/") && filepath.Base(upper) == "diff" && filepath.Clean(path) == path && strings.Count(path, "/") == 1 {
+			path = filepath.Join(filepath.Dir(filepath.Dir(upper)), path)
 		}
 		if !filepath.IsAbs(path) {
 			// containerd compacts sibling snapshot paths to <id>/fs. Resolve

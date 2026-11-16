@@ -13,6 +13,7 @@
 package runtimewrapper
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -31,6 +32,10 @@ const (
 )
 
 type Config struct {
+	RuntimeProvider             string            `yaml:"runtimeProvider"`
+	CRIOSocket                  string            `yaml:"crioSocket"`
+	CRIOStorageHelper           string            `yaml:"crioStorageHelper"`
+	CRIOSourceRoot              string            `yaml:"crioSourceRoot"`
 	DefaultDelegateRuntime      string            `yaml:"defaultDelegateRuntime"`
 	RootfsdSocket               string            `yaml:"rootfsdSocket"`
 	RuntimeRoot                 string            `yaml:"runtimeRoot"`
@@ -46,6 +51,10 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
+		RuntimeProvider:        "containerd",
+		CRIOSocket:             "/var/run/crio/crio.sock",
+		CRIOStorageHelper:      "/usr/local/bin/rootpv-crio-storage",
+		CRIOSourceRoot:         "/var/lib/rootpv/crio-sources",
 		DefaultDelegateRuntime: "/usr/bin/runc",
 		RootfsdSocket:          DefaultRootfsdSocket,
 		RuntimeRoot:            DefaultRuntimeRoot,
@@ -81,6 +90,7 @@ func LoadConfig(path string) (Config, error) {
 	if err := yaml.Unmarshal(data, &fileCfg); err != nil {
 		return Config{}, err
 	}
+	cfg.mergeProvider(fileCfg)
 	if fileCfg.DefaultDelegateRuntime != "" {
 		cfg.DefaultDelegateRuntime = fileCfg.DefaultDelegateRuntime
 	}
@@ -117,6 +127,21 @@ func LoadConfig(path string) (Config, error) {
 	return cfg, nil
 }
 
+func (cfg *Config) mergeProvider(fileCfg Config) {
+	if fileCfg.RuntimeProvider != "" {
+		cfg.RuntimeProvider = fileCfg.RuntimeProvider
+	}
+	if fileCfg.CRIOSocket != "" {
+		cfg.CRIOSocket = fileCfg.CRIOSocket
+	}
+	if fileCfg.CRIOStorageHelper != "" {
+		cfg.CRIOStorageHelper = fileCfg.CRIOStorageHelper
+	}
+	if fileCfg.CRIOSourceRoot != "" {
+		cfg.CRIOSourceRoot = fileCfg.CRIOSourceRoot
+	}
+}
+
 func LoadConfigFromEnv() (Config, error) {
 	path := os.Getenv("ROOTPV_WRAPPER_CONFIG")
 	cfg, err := LoadConfig(path)
@@ -141,7 +166,29 @@ func LoadConfigFromEnv() (Config, error) {
 	if value := os.Getenv("ROOTPV_CONTAINERD_NAMESPACE"); value != "" {
 		cfg.ContainerdNamespace = value
 	}
+	if err := cfg.ValidateProvider(); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+func (c Config) ValidateProvider() error {
+	switch c.RuntimeProvider {
+	case "", "containerd":
+		return nil
+	case "cri-o":
+		if c.OverlayMode != OverlayModeFlatLowerdirs {
+			return fmt.Errorf("CRI-O requires flat-lowerdirs")
+		}
+		for _, path := range []string{c.CRIOSocket, c.CRIOStorageHelper, c.CRIOSourceRoot} {
+			if !filepath.IsAbs(path) {
+				return fmt.Errorf("CRI-O endpoint, helper and source root must be absolute paths")
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported runtime provider %q", c.RuntimeProvider)
+	}
 }
 
 func (c Config) DelegateRuntime(wrapperName string) (string, error) {

@@ -50,6 +50,11 @@ func (p ProcessIdentity) Valid() bool {
 }
 
 type State struct {
+	RuntimeProvider      string          `json:"runtime_provider,omitempty"`
+	RuntimeEndpoint      string          `json:"runtime_endpoint,omitempty"`
+	CRIOStorageHelper    string          `json:"crio_storage_helper,omitempty"`
+	CRIOSourceRoot       string          `json:"crio_source_root,omitempty"`
+	BootID               string          `json:"boot_id,omitempty"`
 	FormatVersion        string          `json:"format_version"`
 	ContainerID          string          `json:"container_id"`
 	Namespace            string          `json:"namespace,omitempty"`

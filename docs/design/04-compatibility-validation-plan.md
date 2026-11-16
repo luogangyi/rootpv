@@ -1,6 +1,6 @@
 # RootPV 兼容性验证方案与矩阵
 
-**文档状态：** 持续验证与维护（2026-11-12 更新）
+**文档状态：** 持续验证与维护（2026-11-14 更新）
 
 **维护方式：** 每次验证完成后更新本表和对应的可复现测试记录；未记录证据的组合不得标记为支持。
 
@@ -12,7 +12,7 @@ openfuyao.cn 域名迁移已完成 [本地冒烟](../../tests/e2e/results/domain
 
 ## 1. 目的与原则
 
-RootPV 的数据路径依赖 Kubernetes 准入、containerd runtime handler、`overlayfs` 挂载语义、PVC
+RootPV 的数据路径依赖 Kubernetes 准入、所选 CRI 后端的 runtime handler、`overlayfs` 挂载语义、PVC
 存储，以及实际 OCI runtime 或 Kata task shim/VM。仅根据 Kubernetes 或 containerd 的版本号不能推断兼容性。因此，兼容性
 验证以“可复现的完整组合”为单位，而不是以单个组件版本为单位。
 
@@ -44,7 +44,7 @@ device plugin 的精确版本。
 
 所有测试环境应满足以下前提：
 
-- Linux 节点，containerd 使用 `overlayfs` snapshotter；
+- Linux 节点，containerd 使用 `overlayfs` snapshotter，或按 [CRI-O 指南](../user-guide/cri-o.md) 配置 rootful containers/storage overlay；
 - 使用 Filesystem + ReadWriteOnce PVC；动态块 PVC 与静态 local PVC 的证据分开记录，文件系统需满足 OverlayFS 要求；
 - RootPV 仅部署到明确打标的 canary 节点；
 - 测试镜像、Chart、配置和脚本均使用固定版本或 digest；
@@ -55,7 +55,7 @@ device plugin 的精确版本。
 | 字段 | 记录内容 |
 | --- | --- |
 | 测试标识 | 日期、RootPV Git SHA、镜像 digest、Chart 版本/包 digest |
-| 平台 | Kubernetes、containerd、操作系统、内核、CPU 架构、CNI 和 CSI/StorageClass 版本 |
+| 平台 | Kubernetes、CRI 后端及官方/诊断构建标识、操作系统、内核、CPU 架构、CNI 和 CSI/StorageClass 版本 |
 | 节点与存储 | 节点角色和规格摘要、snapshotter、文件系统、PVC access mode 与 volume mode |
 | runtime | 原 RuntimeClass/handler、runtime type、delegate 版本和 Shadow RuntimeClass；Kata 额外记录 runtime 实现、hypervisor、guest kernel 与共享文件系统 |
 | 设备 | 厂商、型号/切分形态、驱动、device plugin、容器运行时集成版本；无设备时标记“无” |
@@ -84,6 +84,7 @@ device plugin 的精确版本。
 | containerd | 1.7.x | 在两个不同 Kubernetes minor 上完整验证 | stock `io.containerd.runc.v2` | 验证中（官方 1.7.35 在 Kubernetes v1.29 完成 C04） |
 | containerd | 2.0.x | 在一个受支持 Kubernetes 版本上完整验证 | stock `io.containerd.runc.v2` | 验证中（官方 2.0.12 在 Kubernetes v1.29 完成 C04） |
 | containerd | 2.1.x | 作为当前基线持续回归 | stock `io.containerd.runc.v2` | 验证中（2.1.1（厂商构建）：基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01；官方静态 2.1.9：PVC 持久化与 Pod 重建。直接降级到 1.6.28 不可复用运行中 2.1 状态） |
+| CRI-O + runc | Linux AMD64 / Kubernetes 1.37 / 官方 CRI-O 1.37.3 / local PVC 与串行 EBS | 原生基线、RootPV 控制链、持久化、隔离、恢复和清理 | runc 1.5.2 | 逐项结果见[验收记录](../../tests/e2e/results/cri-o-runc-2026-11-16.md) |
 | CPU 架构 | linux/amd64 | 每个 containerd 大版本至少一个基础组合 | stock `io.containerd.runc.v2` | 验证中（Kubernetes v1.29、containerd 2.1.1（厂商构建） 基础功能、性能、R01/R02/R03 各连续 3 轮、C07 和 U01） |
 | CPU 架构 | linux/arm64 | Kubernetes 1.34.3（厂商构建）；910C：containerd 2.1.1/Linux 5.10/ext4 local；950DT：containerd 2.3.5/Linux 6.6/XFS local | Ascend runc-v2 | 已验证限定功能用例，见 [910C 记录](../../tests/e2e/results/ascend-910c-2026-11-11.md)与 [950DT 记录](../../tests/e2e/results/ascend-950-2026-11-12.md)；不替代完整基线/恢复套件 |
 | 操作系统/内核 | 主流发行版的 LTS 内核 | 每个新内核系列执行 OverlayFS 和恢复用例 | stock `io.containerd.runc.v2` | 待验证 |
@@ -261,6 +262,16 @@ runsc 20261012.0、systrap、ext4 local RWO PVC。[在线功能验收](../../tes
 修正后原生与 RootPV 在线 Pod 均只启动一个分组 shim，删除后相关进程自动退出。
 历史 M01/M02 的 gVisor 拒绝记录仅对应旧实现；未知 shim 仍须失败关闭。
 动态 CSI、性能、设备、checkpoint、在线 Webhook/配置中断及节点/Sentry/gofer 故障恢复仍待验证。
+
+### 5.7 CRI-O 专项验证边界
+
+本分支仅验收未修改的官方 CRI-O + conmon + runc，逐项结果见
+[本轮记录](../../tests/e2e/results/cri-o-runc-2026-11-16.md)。CRI-O VM 实验独立保存，不计入本分支通过项。
+
+重点验收在线准入、Strict、sidecar/路径隔离、同 Pod 重启、服务恢复后再次退出、创建失败后的
+路径复用，以及删除后 state/source journal/storage pin/挂载/进程清理。EBS 创建、重建、删除串行执行。
+同时回归 containerd 的 runc/Kata/gVisor；GPU/NPU 需要真实硬件，环境缺失时明确记为未执行。
+SELinux、userns、跨 CRI 迁移、其他版本和性能不由本轮结果推断支持。
 
 ## 6. 自动化、环境接入与结果发布
 

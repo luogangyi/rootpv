@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -25,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	"gitcode.com/openFuyao/rootpv/internal/crio"
 	"gitcode.com/openFuyao/rootpv/internal/httpapi"
 	"gitcode.com/openFuyao/rootpv/internal/node"
 	"gitcode.com/openFuyao/rootpv/internal/rootfsd"
@@ -32,6 +34,12 @@ import (
 
 func main() {
 	var opts options
+	flag.StringVar(&opts.runtimeProvider, "runtime-provider", "containerd", "containerd or cri-o")
+	flag.StringVar(&opts.crioSocket, "crio-socket", "/var/run/crio/crio.sock", "CRI-O Unix socket")
+	flag.StringVar(&opts.crioDropIn, "crio-drop-in", "/host/etc/crio/crio.conf.d/99-rootpv.conf", "dedicated CRI-O handler drop-in")
+	flag.StringVar(&opts.crioRestartCommand, "crio-restart-command", "", "command to restart CRI-O after handler changes")
+	flag.StringVar(&opts.crioStorageHelper, "crio-storage-helper", "/usr/local/bin/rootpv-crio-storage", "storage helper executable")
+	flag.StringVar(&opts.crioSourceRoot, "crio-source-root", "/var/lib/rootpv/crio-sources", "persistent source intents")
 	flag.StringVar(&opts.metricsAddr, "metrics-addr", ":8080", "HTTP health and metrics listen address")
 	flag.StringVar(&opts.nodeName, "node-name", os.Getenv("NODE_NAME"), "Kubernetes node name")
 	flag.StringVar(&opts.kubeletRoot, "kubelet-root", "/var/lib/kubelet", "kubelet root path")
@@ -52,6 +60,12 @@ func main() {
 }
 
 type options struct {
+	runtimeProvider          string
+	crioSocket               string
+	crioDropIn               string
+	crioRestartCommand       string
+	crioStorageHelper        string
+	crioSourceRoot           string
 	metricsAddr              string
 	nodeName                 string
 	kubeletRoot              string
@@ -67,12 +81,25 @@ type options struct {
 }
 
 func run(opts options) error {
+	if opts.runtimeProvider != "containerd" && opts.runtimeProvider != crio.Provider {
+		return fmt.Errorf("unsupported runtime provider %q", opts.runtimeProvider)
+	}
 	manager := rootfsd.NewManager(rootfsd.ManagerOptions{NodeName: opts.nodeName})
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	cleaner := rootfsd.NamespaceRecoveryCleaner{}
-	if err := manager.Reconcile(ctx, opts.runtimeRoot, cleaner); err != nil {
+	reconcile := func() error {
+		if err := manager.Reconcile(ctx, opts.runtimeRoot, cleaner); err != nil {
+			return err
+		}
+		if opts.runtimeProvider == crio.Provider {
+			store := crio.Storage{Client: crio.Client{Socket: opts.crioSocket}, Helper: opts.crioStorageHelper, StateRoot: opts.crioSourceRoot}
+			return store.Reap(ctx, opts.runtimeRoot, rootfsd.ProcProcessChecker{}.Alive)
+		}
+		return nil
+	}
+	if err := reconcile(); err != nil {
 		return err
 	}
 	go func() {
@@ -83,7 +110,7 @@ func run(opts options) error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := manager.Reconcile(ctx, opts.runtimeRoot, cleaner); err != nil {
+				if err := reconcile(); err != nil {
 					log.Printf("rootfs lifecycle reconciliation failed: %v", err)
 					stop()
 					return
@@ -95,19 +122,8 @@ func run(opts options) error {
 	if err := startRootfsdSocket(ctx, opts.rootfsdSocket, manager); err != nil {
 		return err
 	}
-	go node.StartPodReconciler(ctx, opts.nodeName, opts.kubeletRoot, manager, opts.publishNodeCapabilities)
-	if opts.runtimeAdapterDiscovery {
-		go node.StartRuntimeInventoryPublisher(ctx, opts.nodeName, opts.containerdConfig, opts.hostRoot)
-		go node.StartRuntimeAdapterReconciler(ctx, opts.nodeName, node.RuntimeAdapterReconcilerOptions{
-			Namespace:        opts.podNamespace,
-			ContainerdConfig: opts.containerdConfig,
-			HostRoot:         opts.hostRoot,
-			WrapperBinary:    "/usr/local/bin/rootfs-runtime-wrapper",
-			RegistryPath:     opts.runtimeAdapterRegistry,
-			RestartCommand:   opts.containerdRestartCommand,
-			SkipReadiness:    !opts.publishNodeCapabilities,
-		})
-	}
+	go node.StartPodReconciler(ctx, opts.nodeName, opts.kubeletRoot, manager, node.CapabilityOptions{RootfsdSocket: opts.rootfsdSocket, Disabled: !opts.publishNodeCapabilities})
+	startRuntimeDiscovery(ctx, opts)
 
 	metricsSrv := &http.Server{
 		Addr:              opts.metricsAddr,
@@ -126,6 +142,32 @@ func run(opts options) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return metricsSrv.Shutdown(shutdownCtx)
+}
+
+func startRuntimeDiscovery(ctx context.Context, opts options) {
+	if !opts.runtimeAdapterDiscovery {
+		return
+	}
+	if opts.runtimeProvider == crio.Provider {
+		go node.StartCRIOInventoryPublisher(ctx, opts.nodeName, opts.crioSocket, opts.hostRoot)
+	} else {
+		go node.StartRuntimeInventoryPublisher(ctx, opts.nodeName, opts.containerdConfig, opts.hostRoot)
+	}
+	adapterOptions := node.RuntimeAdapterReconcilerOptions{
+		Namespace:        opts.podNamespace,
+		ContainerdConfig: opts.containerdConfig,
+		HostRoot:         opts.hostRoot,
+		WrapperBinary:    "/usr/local/bin/rootfs-runtime-wrapper",
+		RegistryPath:     opts.runtimeAdapterRegistry,
+		RestartCommand:   opts.containerdRestartCommand,
+		SkipReadiness:    !opts.publishNodeCapabilities,
+	}
+	if opts.runtimeProvider == crio.Provider {
+		adapterOptions.CRIOSocket = opts.crioSocket
+		adapterOptions.CRIODropIn = opts.crioDropIn
+		adapterOptions.RestartCommand = opts.crioRestartCommand
+	}
+	go node.StartRuntimeAdapterReconciler(ctx, opts.nodeName, adapterOptions)
 }
 
 func startRootfsdSocket(ctx context.Context, socket string, manager *rootfsd.Manager) error {

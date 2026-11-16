@@ -48,6 +48,14 @@ controller:
 
 nodeAgent:
   enabled: true
+  runtimeProvider: containerd
+  crio:
+    socket: /var/run/crio/crio.sock
+    storageRoot: /var/lib/containers/storage
+    runRoot: /run/containers/storage
+    configDir: /etc/crio/crio.conf.d
+    sourceRoot: /var/lib/rootpv/crio-sources
+    restartCommand: "nsenter -t 1 -m -u -i -n -p -r -w -- systemctl restart crio"
   hostPID: true
   metricsAddr: ":8080"
   kubeletRoot: /var/lib/kubelet

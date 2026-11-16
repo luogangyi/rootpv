@@ -23,8 +23,18 @@ RUN echo "building rootfs-runtime-wrapper for ${TARGETOS}/${TARGETARCH}" && CGO_
 
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /out/containerd-shim-rootpv-kata-v2 ./cmd/containerd-shim-rootpv-kata-v2
 
+FROM --platform=$BUILDPLATFORM golang:1.25-bookworm AS crio-storage-build
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /src
+COPY tools/crio-storage/go.mod tools/crio-storage/go.sum ./
+RUN go mod download
+COPY tools/crio-storage/ ./
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -tags 'exclude_graphdriver_btrfs,exclude_graphdriver_zfs' -o /out/rootpv-crio-storage .
+
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends bash ca-certificates procps python3 util-linux && rm -rf /var/lib/apt/lists/*
+COPY --from=crio-storage-build /out/rootpv-crio-storage /usr/local/bin/rootpv-crio-storage
 COPY --from=build /out/persistent-rootfsd /usr/local/bin/persistent-rootfsd
 COPY --from=build /out/persistent-rootfs-controller /usr/local/bin/persistent-rootfs-controller
 COPY --from=build /out/rootfs-runtime-wrapper /usr/local/bin/rootfs-runtime-wrapper

@@ -31,6 +31,7 @@ const (
 )
 
 type CapabilityOptions struct {
+	Disabled      bool
 	WrapperPaths  []string
 	RootfsdSocket string
 	PathExists    func(string) bool

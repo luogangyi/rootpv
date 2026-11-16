@@ -52,6 +52,8 @@ type DiscoveredRuntimeHandler struct {
 }
 
 type RuntimeInventory struct {
+	RuntimeProvider        string                     `json:"runtimeProvider,omitempty" yaml:"runtimeProvider,omitempty"`
+	RuntimeConfigDigest    string                     `json:"runtimeConfigDigest,omitempty" yaml:"runtimeConfigDigest,omitempty"`
 	NodeUID                string                     `json:"nodeUID" yaml:"nodeUID"`
 	ContainerdConfigDigest string                     `json:"containerdConfigDigest,omitempty" yaml:"containerdConfigDigest,omitempty"`
 	DefaultHandler         string                     `json:"defaultHandler,omitempty" yaml:"defaultHandler,omitempty"`

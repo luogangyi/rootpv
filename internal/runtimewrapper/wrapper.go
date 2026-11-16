@@ -163,19 +163,16 @@ func (FileRuntimeStateStore) Remove(runtimeRoot, containerID string) error {
 
 func NewWrapper(cfg Config) Wrapper {
 	return Wrapper{
-		Config:          cfg,
-		Rootfs:          NewUnixResolver(cfg.RootfsdSocket),
-		Mounter:         SyscallOverlayMounter{},
-		Unmounter:       SyscallUnmounter{},
-		Executor:        SyscallExecutor{},
-		SpecStore:       FileSpecStore{},
-		Logger:          log.New(os.Stderr, "rootfs-runtime-wrapper: ", log.LstdFlags),
-		FlatMounter:     &SyscallFlatOverlayMounter{},
-		NormalUnmounter: SyscallNormalUnmounter{},
-		SnapshotSource: LazyContainerdSnapshotSource{
-			Address:   cfg.ContainerdAddress,
-			Namespace: cfg.ContainerdNamespace,
-		},
+		Config:             cfg,
+		Rootfs:             NewUnixResolver(cfg.RootfsdSocket),
+		Mounter:            SyscallOverlayMounter{},
+		Unmounter:          SyscallUnmounter{},
+		Executor:           SyscallExecutor{},
+		SpecStore:          FileSpecStore{},
+		Logger:             log.New(os.Stderr, "rootfs-runtime-wrapper: ", log.LstdFlags),
+		FlatMounter:        &SyscallFlatOverlayMounter{},
+		NormalUnmounter:    SyscallNormalUnmounter{},
+		SnapshotSource:     NewSnapshotSource(cfg),
 		DelegateSupervisor: ProcessDelegateSupervisor{Stdout: os.Stdout, Stderr: os.Stderr},
 		CommandRunner:      ExecCommandRunner{Stdout: os.Stdout, Stderr: os.Stderr},
 		RuntimeCleaner:     ExecRuntimeCleaner{},
@@ -355,6 +352,17 @@ func (w Wrapper) cleanupOnFailure(containerID string, cause error) error {
 // runCutover 使用节点生成的、不可变的 adapter registry 恢复原始 runtime，
 // 同时持久化委托信息，使后续 state/delete 命令无需重新依赖 OCI spec。
 func (w Wrapper) runCutover(ctx context.Context, wrapperName string, args, env []string) error {
+	if w.Config.RuntimeProvider == "cri-o" && len(args) == 1 && (args[0] == "--version" || args[0] == "features") {
+		registry, err := LoadAdapterRegistry(w.Config.RuntimeAdapterRegistry, RegistryOptions{AllowedDelegateDirs: w.Config.AllowedDelegateDirs})
+		if err != nil {
+			return err
+		}
+		_, adapter, err := registry.ResolveByWrapperBinary(wrapperName)
+		if err != nil {
+			return err
+		}
+		return w.exec(adapter.DelegateBinary, args, env)
+	}
 	inv, err := ParseInvocation(args)
 	if err != nil {
 		return err
@@ -383,6 +391,12 @@ func (w Wrapper) runCutoverCleanup(ctx context.Context, args, env []string, inv 
 			return fmt.Errorf("persistent rootfs state has no merged directory")
 		}
 		return w.runFlatDelete(ctx, state.DelegateBinary, args, env, state)
+	}
+	if state.RuntimeProvider == "cri-o" && !state.RootfsEnabled {
+		if err := w.CommandRunner.Run(ctx, state.DelegateBinary, args, env); err != nil {
+			return err
+		}
+		return w.stateStore().Remove(w.Config.RuntimeRoot, state.ContainerID)
 	}
 	return w.legacyDelegateWrapper(state.DelegateBinary).Run(ctx, "rootfs-runtime-wrapper", args, env)
 }
@@ -467,6 +481,9 @@ func (w Wrapper) resolveCutoverAdapter(wrapperName string, spec *specs.Spec) (st
 	}
 	if adapter.RootfsRuntimeClass != "" && annotations[rootfs.AnnotationEffectiveRuntimeClass] != "" && annotations[rootfs.AnnotationEffectiveRuntimeClass] != adapter.RootfsRuntimeClass {
 		return "", ResolvedRuntimeAdapter{}, fmt.Errorf("runtime_adapter_state_mismatch")
+	}
+	if adapter.Retired {
+		return "", ResolvedRuntimeAdapter{}, fmt.Errorf("runtime_adapter_retired")
 	}
 	// containerd keeps the sandbox runtime handler in CRI metadata; it is not
 	// guaranteed to be copied into the OCI spec delivered to the runtime binary.
@@ -576,6 +593,9 @@ func (w Wrapper) runFlatDelete(ctx context.Context, delegate string, args, env [
 	}
 	if !released.Released {
 		return fmt.Errorf("rootfsd did not confirm lease release")
+	}
+	if err := ReleaseStateSource(ctx, state); err != nil {
+		return err
 	}
 	if err := w.stateStore().Remove(w.Config.RuntimeRoot, state.ContainerID); err != nil {
 		return err
@@ -697,10 +717,10 @@ func (w Wrapper) resolveFlatSource(ctx context.Context, create flatCreateRequest
 	request.RootfsChainID = source.RootfsChainID
 	response, err := w.resolve(ctx, request)
 	if err != nil {
-		return SourceOverlay{}, apiv1alpha1.ResolveRootfsResponse{}, err
+		return SourceOverlay{}, apiv1alpha1.ResolveRootfsResponse{}, errors.Join(err, ReleaseSnapshotSource(ctx, w.SnapshotSource, create.inv.ContainerID))
 	}
 	if !response.Enabled || response.LeaseID == "" {
-		return SourceOverlay{}, apiv1alpha1.ResolveRootfsResponse{}, fmt.Errorf("flat rootfs resolve did not return an enabled lease: %s", response.Reason)
+		return SourceOverlay{}, apiv1alpha1.ResolveRootfsResponse{}, errors.Join(fmt.Errorf("flat rootfs resolve did not return an enabled lease: %s", response.Reason), ReleaseSnapshotSource(ctx, w.SnapshotSource, create.inv.ContainerID))
 	}
 	return source, response, nil
 }
@@ -733,6 +753,7 @@ func (w Wrapper) newFlatRuntimeState(create flatCreateRequest, source SourceOver
 		DelegateBinary:   create.delegate,
 		DelegateArgs:     append([]string(nil), create.args...),
 	}
+	w.Config.SetRuntimeState(&state)
 	if shim, err := ProcessIdentityFor(os.Getppid()); err == nil {
 		state.Shim = shim
 	}
@@ -799,6 +820,9 @@ func (t *flatCreateTransaction) removeState(previous error) error {
 	if previous != nil {
 		return previous
 	}
+	if err := ReleaseSnapshotSource(t.ctx, t.wrapper.SnapshotSource, t.create.inv.ContainerID); err != nil {
+		return err
+	}
 	if err := t.wrapper.stateStore().Remove(t.wrapper.Config.RuntimeRoot, t.create.inv.ContainerID); err != nil {
 		return fmt.Errorf("remove runtime state during rollback: %w", err)
 	}
@@ -858,7 +882,7 @@ func (t *flatCreateTransaction) mountOverlay(validated SourceOverlay) error {
 	}
 	t.mountAttempted = true
 	return t.wrapper.FlatMounter.MountFlat(FlatOverlayMountRequest{
-		LowerDirs: validated.LowerDirs, UpperDir: t.response.UpperDir, WorkDir: t.response.WorkDir,
+		LowerDirs: SourceLowerDirs(validated), UpperDir: t.response.UpperDir, WorkDir: t.response.WorkDir,
 		MergedDir: t.state.MergedDir, ResolverOptions: t.response.MountOptions, MountLabel: t.create.resolve.MountLabel,
 	})
 }
