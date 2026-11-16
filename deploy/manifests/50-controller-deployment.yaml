@@ -30,8 +30,14 @@ spec:
         args:
         - --addr=:9443
         - --metrics-addr=:8080
+        - --runtime-adapter-discovery=true
         - --tls-cert-file=/tls/tls.crt
         - --tls-private-key-file=/tls/tls.key
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
         ports:
         - name: webhook
           containerPort: 9443
@@ -75,8 +81,6 @@ spec:
         configMap:
           name: persistent-rootfs-webhook-config
           items:
-          - key: runtimeClassMapping.yaml
-            path: runtimeClassMapping.yaml
           - key: storagePolicy.yaml
             path: storagePolicy.yaml
       - name: webhook-certs

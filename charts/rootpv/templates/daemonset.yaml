@@ -125,6 +125,11 @@ spec:
           mountPath: /etc/containerd
         - name: host-root
           mountPath: /host
+          readOnly: true
+        - name: containerd-etc
+          mountPath: /host/etc/containerd
+        - name: host-etc-rootpv
+          mountPath: /host/etc/rootpv
         - name: host-usr-bin
           mountPath: /host/usr/bin
           readOnly: true

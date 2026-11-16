@@ -77,8 +77,8 @@ kubectl label node <node-name> openfuyao.cn/persistent-rootfs=true --overwrite
 kubectl apply -f rootpv-rendered.yaml
 ```
 
-同一组资源由 Helm release 或 GitOps 管理其中一种方式持有。deploy/manifests 的旧静态安装器
-仍采用固定 runc/NVIDIA handler，不是当前 Kata 自动发现安装路径。
+同一组资源由 Helm release 或 GitOps 管理其中一种方式持有。`deploy/manifests` 的直接安装入口
+也使用自动发现/catalog，步骤见下一节；不要同时由两种安装方式管理同一实例。
 
 离线 helm template 会生成新的 TLS Secret 和 webhook caBundle。再次渲染并应用更新证书时，
 同时重新启动 Controller，使其加载匹配的证书：
@@ -86,6 +86,66 @@ kubectl apply -f rootpv-rendered.yaml
 ```bash
 kubectl -n rootpv-system rollout restart deployment/persistent-rootfs-controller
 ```
+
+## 直接使用 deploy/manifests
+
+无需 Helm 时，可以继续使用 `kubectl apply -f deploy/manifests` 的安装入口。
+这些清单现在与 Chart 使用同一套 runtime 自动发现：安装通用 wrapper/proxy，发布 inventory，
+生成 catalog、shadow RuntimeClass、containerd handler 和本地 registry。
+不再运行只生成 runc/NVIDIA 的旧 `configure-containerd-rootpv.sh`，也不预建固定 RuntimeClass。
+已配置好的 Ascend runc-v2 handler 按相同方式接入。
+
+Controller 仅在安装命名空间创建 catalog ConfigMap，并读取/更新 `rootpv-runtime-adapters`；
+node-agent 仅可读取该 ConfigMap。RuntimeClass 仍使用集群级权限。
+node-agent 的 `/host` 挂载只读；containerd 配置、`/etc/rootpv` 和 wrapper 安装目录
+通过单独的可写挂载更新。节点代理仍为 privileged，这项收紧不构成宿主机安全隔离。
+
+准备当前代码构建的镜像；ARM64 节点需要 ARM64 或多架构镜像。复制清单到本地发布目录，
+把所有 `rootpv:latest` 替换成已推送的镜像标签。核对 DaemonSet 的宿主路径、
+`allowedOverlaySnapshotRoots` 和 `--containerd-restart-command`；默认重启命令要求宿主使用 systemd。
+非 systemd 宿主必须先替换该参数，并验证实际加载了新 runtime handler，再部署业务 Pod。
+
+先应用 namespace、RBAC、ConfigMap 和 Service，准备 TLS 后再启用 Webhook：
+
+```bash
+# /path/to/rootpv-manifests 为已经修改镜像与节点路径的清单副本。
+ROOTPV_MANIFESTS=/path/to/rootpv-manifests
+kubectl apply -f "$ROOTPV_MANIFESTS/00-namespace.yaml"
+kubectl apply -f deploy/crds
+kubectl apply -f "$ROOTPV_MANIFESTS/10-rbac.yaml" -f "$ROOTPV_MANIFESTS/20-config.yaml" \
+  -f "$ROOTPV_MANIFESTS/40-service.yaml"
+
+ROOTPV_TLS_DIR=$(mktemp -d)
+chmod 700 "$ROOTPV_TLS_DIR"
+openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+  -keyout "$ROOTPV_TLS_DIR/tls.key" -out "$ROOTPV_TLS_DIR/tls.crt" \
+  -subj /CN=persistent-rootfs-webhook.rootpv-system.svc \
+  -addext 'subjectAltName=DNS:persistent-rootfs-webhook.rootpv-system.svc,DNS:persistent-rootfs-webhook.rootpv-system.svc.cluster.local'
+kubectl -n rootpv-system create secret tls persistent-rootfs-webhook-tls \
+  --cert="$ROOTPV_TLS_DIR/tls.crt" --key="$ROOTPV_TLS_DIR/tls.key" --dry-run=client -o yaml | kubectl apply -f -
+ROOTPV_CA=$(base64 < "$ROOTPV_TLS_DIR/tls.crt" | tr -d '\n')
+sed "s|caBundle: Cg==|caBundle: $ROOTPV_CA|" "$ROOTPV_MANIFESTS/60-webhook.yaml" \
+  > "$ROOTPV_TLS_DIR/webhook.yaml"
+cp "$ROOTPV_TLS_DIR/webhook.yaml" "$ROOTPV_MANIFESTS/60-webhook.yaml"
+rm -rf "$ROOTPV_TLS_DIR"
+
+kubectl label node <node-name> openfuyao.cn/persistent-rootfs=true --overwrite
+kubectl apply -f "$ROOTPV_MANIFESTS/50-controller-deployment.yaml" -f "$ROOTPV_MANIFESTS/50-daemonset.yaml"
+kubectl -n rootpv-system rollout status deploy/persistent-rootfs-controller --timeout=180s
+kubectl -n rootpv-system rollout status ds/persistent-rootfsd --timeout=180s
+kubectl apply -f "$ROOTPV_MANIFESTS/60-webhook.yaml"
+```
+
+后续使用这份已配置镜像和 CA 的副本执行 `kubectl apply -f "$ROOTPV_MANIFESTS"`。
+不要重新应用仓库中的占位 CA；更换证书时同步更新 Secret、caBundle 并重启 Controller。
+Ascend 的源 handler、源 RuntimeClass、驱动/runtime/plugin 仍须预先安装，见 [Ascend 指南](ascend.md)。
+业务 Pod 显式使用 `runtimeClassName: ascend`；资源名本身不会触发 Ascend 路由。
+
+**已有旧静态实例迁移**：先停止使用该实例的 RootPV 工作负载，保留 PVC，并备份节点配置。
+旧 `persistent-rootfs-*` RuntimeClass 的 handler 与新生成值不同，Kubernetes 不允许原地修改 handler；
+在确认没有 Pod 引用后，按名称删除本实例原先静态创建的 RuntimeClass，再启动新 Controller 重建。
+从发布目录移除旧 `30-runtimeclasses.yaml`，不要再次应用它，也不要删除原厂 `ascend`/`nvidia` 等源 RuntimeClass。
+迁移后按下节检查 catalog 与 adapter 就绪，再重建业务 Pod；旧的厂商能力标签不能代替新 adapter 就绪标签。
 
 ## 检查就绪
 
@@ -177,3 +237,18 @@ runtimeClassName: gvisor。要求 flat-lowerdirs，详见 [gVisor 指南](gvisor
 containerd 原生 CDI 也可使用节点默认 adapter。RootPV 保留设备分配与注入，不安装驱动或修改 MIG 切分。
 接入步骤、CDI/legacy 区别、自定义节点路径和驱动升级边界见 [NVIDIA 指南](nvidia.md)，
 整卡实测结果见 [验证记录](../../tests/e2e/results/nvidia-2026-11-08.md)。
+
+## Ascend 接入
+
+先验证原厂 runtime/device plugin 下的普通 NPU 计算，再用当前 Chart 或 `deploy/manifests` 自动发现 `ascend` runc-v2 handler。
+ARM64 节点使用匹配架构的 RootPV 镜像；业务保留源 RuntimeClass 并添加 RootPV 注解。
+containerd v3 配置、plugin 自身 RuntimeClass、芯片分配单位和版本边界见 [Ascend 指南](ascend.md)，
+可复用 [完整 local PV 清单](../../tests/e2e/manifests/ascend.yaml)。
+RootPV 不额外限定驱动/runtime 的数字版本；910C 已验证驱动 25.5.6、runtime/plugin 7.3.0、
+CANN 8.5.0 A3 与 containerd 2.1.1。该组合不是最低版本要求，其他组合和升级路径须单独验收。
+安装器执行成功不代表 handler 配置正确：核对生效配置为 `io.containerd.runc.v2`，并确认 plugin
+实际通过 Ascend runtime 分配设备，详情见 [版本要求](ascend.md#版本与未覆盖范围)。
+
+950DT 继续使用相同 runc-v2 接入方式；准备 26.1.0 plugin 的 UMDK、实际 socket 路径和资源键，
+见 [950 接入说明](ascend.md#950dt-接入与当前验证状态)与 [诊断 YAML](../../tests/e2e/manifests/ascend-950.yaml)。
+本环境按厂商方案配置 `udma` 并重启后完成实际计算与 RootPV 生命周期验证，见 [950 记录](../../tests/e2e/results/ascend-950-2026-11-12.md)；该参数配置不由 RootPV 自动修改。

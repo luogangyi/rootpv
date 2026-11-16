@@ -56,6 +56,13 @@ nodeAgent:
 
 路径必须对应真实节点配置。安装会修改选定节点的 containerd 主配置并可能重启服务。
 
+`/host` 挂载只读；`hostPaths.containerdEtc`、`hostPaths.etcRootpv` 和
+`hostPaths.usrLocalBin` 通过独立可写挂载供节点代理更新配置和 wrapper。
+节点代理仍为 privileged，不应将只读挂载视为宿主机安全隔离。
+ConfigMap 权限通过安装命名空间的 Role 授予：Controller 可创建 catalog，
+仅能读取/更新 `rootpv-runtime-adapters`，node-agent 仅可读取该 ConfigMap。
+RuntimeClass 仍使用集群级权限。使用 `rbac.create=false` 时也需自行提供这些命名空间权限。
+
 values.yaml 中 supportedRuntimeTypes 是当前类型清单；修改该列表不会为任意 shim 增加实现。
 实际兼容性判断由 discovery 和 runtime adapter 代码执行。
 config.storagePolicy 当前渲染到 ConfigMap，但 Controller 没有读取该文件来强制执行类名准入；
@@ -75,7 +82,7 @@ installer 同时安装 OCI wrapper 和 Kata proxy shim。node-agent 读取主配
 reconcile 阶段生成摘要失败会返回错误，停止此次配置和 registry 写入。排查步骤见 [Kata 指南](../../docs/user-guide/kata-qemu.md)。
 
 rootfsd、Controller 和 installer 应使用同一版本镜像。仅启用 discovery 的当前安装路径
-接入 Kata；旧静态 runc/NVIDIA 清单与 legacy adapter 配置不提供 Kata 支持。
+接入 Kata；`deploy/manifests` 直接安装现也使用同一套自动发现/catalog 和 proxy shim。
 
 ## 验证与测试
 
@@ -126,3 +133,17 @@ GPU Operator 的 v3 导入配置按生效 CRI 表发现。节点使用自定义 
 同步配置 hostPaths、`kubeletRoot`、`allowedOverlaySnapshotRoots`，并确保容器内可访问原始绝对快照路径。
 CDI/legacy、驱动与 MIG 要求见 [NVIDIA 指南](../../docs/user-guide/nvidia.md)，
 可复用 [local PV 测试清单](../../tests/e2e/manifests/nvidia.yaml)。
+
+## Ascend 910C / 950
+
+已安装的 Ascend Docker Runtime 通过 `io.containerd.runc.v2` 和绝对 `options.BinaryName` 自动发现，
+无需增加 Chart 支持类型。ARM64 节点选择匹配架构的镜像，先通过普通 NPU Pod 的计算验收。
+Chart 不安装厂商组件，也不修改 NPU 切分或默认 runtime；containerd v3 与 device plugin 的部署细节
+见 [Ascend 指南](../../docs/user-guide/ascend.md)和 [完整测试 YAML](../../tests/e2e/manifests/ascend.yaml)。
+Chart 不按 Ascend 驱动/runtime 版本过滤节点；这不代表所有版本均已兼容。
+910C 已实测驱动 25.5.6、runtime/plugin 7.3.0、CANN 8.5.0 A3 和 containerd 2.1.1，
+最低支持版本尚未确定，其他组合按 [版本要求](../../docs/user-guide/ascend.md#版本与未覆盖范围) 验证。
+
+950DT 使用同一配置链路；26.1.0 plugin 的 UMDK、资源键和 socket 路径要求见
+[950 接入说明](../../docs/user-guide/ascend.md#950dt-接入与当前验证状态)。
+本环境按厂商方案配置 `udma` 并重启后，实际计算与 RootPV 生命周期通过，见 [950 记录](../../tests/e2e/results/ascend-950-2026-11-12.md)。

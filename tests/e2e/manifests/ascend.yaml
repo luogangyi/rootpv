@@ -1,0 +1,114 @@
+# Requires a working Ascend RuntimeClass/device plugin and RootPV catalog.
+# Replace rootpv-npu-worker, create the local PV directory on that node,
+# and select an A3 image compatible with the installed driver and firmware.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rootpv-test-ascend
+  labels:
+    openfuyao.cn/rootpv-ascend-test: "true"
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rootpv-test-ascend-pv
+spec:
+  capacity:
+    storage: 20Gi
+  volumeMode: Filesystem
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: rootpv-local
+  claimRef:
+    namespace: rootpv-test-ascend
+    name: rootfs-data
+  local:
+    path: /var/lib/rootpv/ascend-test-data
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values: [rootpv-npu-worker]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rootfs-data
+  namespace: rootpv-test-ascend
+spec:
+  volumeName: rootpv-test-ascend-pv
+  storageClassName: rootpv-local
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ascend-rootpv-test
+  namespace: rootpv-test-ascend
+  annotations:
+    openfuyao.cn/persistent-rootfs: "true"
+    openfuyao.cn/rootfs-container: app
+    openfuyao.cn/rootfs-volume: rootfs-data
+    openfuyao.cn/rootfs-path: ascend-test/app
+    openfuyao.cn/rootfs-base-image-policy: Strict
+spec:
+  runtimeClassName: ascend
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 5
+  nodeSelector:
+    kubernetes.io/hostname: rootpv-npu-worker
+  containers:
+    - name: app
+      image: swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:8.5.0-a3-ubuntu22.04-py3.11
+      imagePullPolicy: IfNotPresent
+      resources:
+        limits:
+          # Use the resource and allocation unit advertised by your plugin.
+          # One resource may represent one chip rather than one physical card.
+          huawei.com/Ascend910: 1
+      env:
+        - name: POD_UID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.uid
+      command:
+        - /bin/sh
+        - -ec
+        - |
+          test -c /dev/davinci_manager
+          test -f /rootpv-ascend.marker || printf '%s\n' "$POD_UID" > /rootpv-ascend.marker
+          count=0
+          test ! -f /rootpv-ascend.count || count=$(cat /rootpv-ascend.count)
+          printf '%s\n' "$((count + 1))" > /rootpv-ascend.count
+          sync
+          cat /rootpv-ascend.marker /rootpv-ascend.count
+          exec sleep 86400
+      readinessProbe:
+        exec:
+          command: [/bin/sh, -ec, "test -s /rootpv-ascend.count && test -c /dev/davinci_manager"]
+        periodSeconds: 5
+    - name: sidecar
+      image: swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:8.5.0-a3-ubuntu22.04-py3.11
+      imagePullPolicy: IfNotPresent
+      env:
+        - name: ASCEND_VISIBLE_DEVICES
+          value: void
+      command:
+        - /bin/sh
+        - -ec
+        - |
+          test ! -e /rootpv-ascend.marker
+          test ! -e /rootpv-sidecar.marker
+          test ! -e /dev/davinci_manager
+          test -z "$(ls /dev/davinci[0-9]* 2>/dev/null)"
+          echo fresh > /rootpv-sidecar.marker
+          exec sleep 86400
+  volumes:
+    - name: rootfs-data
+      persistentVolumeClaim:
+        claimName: rootfs-data
