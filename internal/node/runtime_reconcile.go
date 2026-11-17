@@ -33,6 +33,9 @@ type RuntimeReconcileOptions struct {
 	RegistryPath   string
 	KataShimBinary string
 	beforeWrite    func() error
+	// CRI-O registry changes are read per invocation; they do not require
+	// restarting the daemon when the runtime definitions remain unchanged.
+	beforeRegistryWrite func() error
 }
 
 type RuntimeReconcileResult struct {
@@ -49,6 +52,7 @@ type localAdapterRegistryV2 struct {
 }
 
 type localAdapterEntryV2 struct {
+	Retired            bool   `yaml:"retired,omitempty"`
 	SourceHandler      string `yaml:"sourceHandler"`
 	RootfsHandler      string `yaml:"rootpvHandler"`
 	RuntimeType        string `yaml:"runtimeType"`

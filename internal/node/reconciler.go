@@ -26,7 +26,7 @@ import (
 	"gitcode.com/openFuyao/rootpv/internal/rootfsd"
 )
 
-func StartPodReconciler(ctx context.Context, nodeName, kubeletRoot string, manager *rootfsd.Manager, publishCapabilities bool) {
+func StartPodReconciler(ctx context.Context, nodeName, kubeletRoot string, manager *rootfsd.Manager, capabilities CapabilityOptions) {
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
 		log.Printf("pod reconciler disabled: in-cluster config unavailable: %v", err)
@@ -41,8 +41,8 @@ func StartPodReconciler(ctx context.Context, nodeName, kubeletRoot string, manag
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
-		if nodeName != "" && publishCapabilities {
-			if err := PublishCapabilityLabels(ctx, client, nodeName, CapabilityOptions{}); err != nil {
+		if nodeName != "" && !capabilities.Disabled {
+			if err := PublishCapabilityLabels(ctx, client, nodeName, capabilities); err != nil {
 				log.Printf("publish rootpv node capabilities: %v", err)
 			}
 		}

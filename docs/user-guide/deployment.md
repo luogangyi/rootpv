@@ -4,10 +4,12 @@
 
 当前协议键统一使用 openfuyao.cn；已有安装升级前先阅读 [域名迁移指南](domain-migration.md)。
 
-RootPV 在原生 containerd overlayfs snapshotter 上把容器可写层持久化到 PVC。
+RootPV 默认在原生 containerd overlayfs snapshotter 上把容器可写层持久化到 PVC。
+CRI-O + runc 后端改用 containers/storage overlay，安装值、备份、存储保护与卸载步骤见
+[CRI-O 指南](cri-o.md)。下文安装命令及直接 YAML 默认面向 containerd，不能仅替换 socket 用于 CRI-O。
 runc-v2 handler 使用 rootfs-runtime-wrapper 的 OCI CLI 路径；Kata + QEMU 使用
 containerd-shim-rootpv-kata-v2 的 task API 代理路径。两者共用 admission、自动发现
-catalog、rootfsd 和 PVC 单写者租约。RootPV 不安装 containerd、Kata、QEMU、驱动或 guest kernel。
+catalog、rootfsd 和 PVC 单写者租约。RootPV 不安装 containerd、CRI-O、Kata、QEMU、驱动或 guest kernel，也不切换 kubelet endpoint。
 
 安装前确认目标节点的原 runtime 可运行普通 Pod，PVC 使用适合 OverlayFS upper/work 的
 Filesystem + ReadWriteOnce 存储，并验证实际文件系统支持所需 OverlayFS 选项。

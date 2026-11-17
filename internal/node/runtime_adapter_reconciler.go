@@ -33,6 +33,8 @@ import (
 )
 
 type RuntimeAdapterReconcilerOptions struct {
+	CRIOSocket       string
+	CRIODropIn       string
 	Namespace        string
 	ContainerdConfig string
 	HostRoot         string
@@ -45,11 +47,15 @@ type RuntimeAdapterReconcilerOptions struct {
 }
 
 func StartRuntimeAdapterReconciler(ctx context.Context, nodeName string, opts RuntimeAdapterReconcilerOptions) {
-	if nodeName == "" || opts.ContainerdConfig == "" || opts.RegistryPath == "" {
+	if nodeName == "" || (opts.ContainerdConfig == "" && opts.CRIOSocket == "") || opts.RegistryPath == "" {
 		return
 	}
 	if strings.TrimSpace(opts.RestartCommand) == "" {
-		log.Printf("runtime adapter reconciler disabled: containerd restart or reload command is required")
+		commandFlag := "--containerd-restart-command"
+		if opts.CRIOSocket != "" {
+			commandFlag = "--crio-restart-command"
+		}
+		log.Printf("runtime adapter reconciler disabled: set %s to activate runtime configuration changes", commandFlag)
 		return
 	}
 	if opts.Namespace == "" {
@@ -117,6 +123,9 @@ func syncRuntimeAdapters(ctx context.Context, client kubernetes.Interface, nodeN
 // Persist reload intent before a changed file. A failed reload or interrupted
 // reconcile withholds readiness and retries even when files already match.
 func reconcileAndActivateAdapters(ctx context.Context, client kubernetes.Interface, nodeName string, opts *RuntimeAdapterReconcilerOptions, catalog config.RuntimeCatalog) (RuntimeReconcileResult, error) {
+	if opts.CRIOSocket != "" {
+		return reconcileAndActivateCRIO(ctx, client, nodeName, opts, catalog)
+	}
 	backup, err := os.ReadFile(opts.ContainerdConfig)
 	if err != nil {
 		return RuntimeReconcileResult{}, err

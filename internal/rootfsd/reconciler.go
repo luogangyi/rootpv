@@ -27,6 +27,7 @@ import (
 	"github.com/containerd/errdefs"
 
 	"gitcode.com/openFuyao/rootpv/internal/config"
+	"gitcode.com/openFuyao/rootpv/internal/crio"
 	"gitcode.com/openFuyao/rootpv/internal/rootfsstate"
 	"gitcode.com/openFuyao/rootpv/internal/runtimeargs"
 )
@@ -80,7 +81,7 @@ func (r Reconciler) Reconcile(ctx context.Context) error {
 		return err
 	}
 	recovery := r.recoverStates(ctx, states)
-	return errors.Join(recovery.err, r.cleanupRecoveredStates(ctx, states, recovery))
+	return errors.Join(recovery.err, r.cleanupRecoveredStates(ctx, states, recovery), r.cleanupCRIORouting(ctx))
 }
 
 // recoverStates 尝试恢复每个状态的租约。单个状态损坏时保留错误并继续，
@@ -152,7 +153,7 @@ func (c recoveredStateCleaner) cleanup(ctx context.Context, state rootfsstate.St
 	// Release 已成功时，前一轮已经完成了外部资源清理；此处只重试删除
 	// runtime state，避免再次撤销或清理已释放的租约。
 	if _, released := c.recovery.releasedStates[state.LeaseID]; released {
-		if err := c.reconciler.removeRuntimeState(state.ContainerID); err != nil {
+		if err := c.reconciler.finishRecoveredState(ctx, state); err != nil {
 			return fmt.Errorf("remove released runtime state for %s: %w", state.ContainerID, err)
 		}
 		return nil
@@ -167,7 +168,7 @@ func (c recoveredStateCleaner) cleanup(ctx context.Context, state rootfsstate.St
 	// The shim may have released the lease while the task lookup was in flight.
 	// Its namespace can already be gone; only the stale state remains to remove.
 	if c.reconciler.Leases.isReleased(state.LeaseID) {
-		return c.reconciler.removeRuntimeState(state.ContainerID)
+		return c.reconciler.finishRecoveredState(ctx, state)
 	}
 	if state.Phase == rootfsstate.PhaseCreatingPending && state.AttemptStatus == rootfsstate.AttemptPending {
 		if err := c.reconciler.Leases.RevokeCreate(ctx, state.LeaseID, state.AttemptToken); err != nil {
@@ -178,12 +179,12 @@ func (c recoveredStateCleaner) cleanup(ctx context.Context, state rootfsstate.St
 		return fmt.Errorf("cleanup recovered state for %s: %w", state.ContainerID, err)
 	}
 	if _, missingLease := c.recovery.missingLeases[state.ContainerID]; missingLease {
-		return c.reconciler.removeRuntimeState(state.ContainerID)
+		return c.reconciler.finishRecoveredState(ctx, state)
 	}
 	if _, err := c.reconciler.Leases.Release(ctx, state.LeaseID); err != nil {
 		return fmt.Errorf("release recovered lease for %s: %w", state.ContainerID, err)
 	}
-	if err := c.reconciler.removeRuntimeState(state.ContainerID); err != nil {
+	if err := c.reconciler.finishRecoveredState(ctx, state); err != nil {
 		return fmt.Errorf("remove recovered state for %s: %w", state.ContainerID, err)
 	}
 	return nil
@@ -205,22 +206,33 @@ func retainRecoveredState(
 ) (bool, error) {
 	// The delegate can exit before the wrapper commits create and hands the
 	// task back to the shim. Absence from containerd is not an orphan yet.
-	if processes.Alive(state.Wrapper) {
+	sameBoot := true
+	if state.RuntimeProvider == crio.Provider {
+		var err error
+		sameBoot, err = sameCRIOBoot(state)
+		if err != nil {
+			return false, err
+		}
+	}
+	if sameBoot && processes.Alive(state.Wrapper) {
 		return true, nil
 	}
 	if state.FormatVersion == rootfsstate.FormatShimV1 {
 		// Kata/virtiofs may still hold a write layer even after a task exits.
 		// Only the shim Delete path releases it while either owner is alive.
-		return processes.Alive(state.Shim), nil
+		return sameBoot && processes.Alive(state.Shim), nil
 	}
 	if state.FormatVersion == rootfsstate.FormatDelegationV1 && state.RootfsEnabled {
 		return runtime.Present(ctx, state)
 	}
 	switch state.Phase {
 	case rootfsstate.PhaseCreated:
+		if state.RuntimeProvider == crio.Provider {
+			return crioRuntimePresent(ctx, state)
+		}
 		return true, nil
 	case rootfsstate.PhaseCreatingRegistered:
-		return state.Delegate.Valid() && processes.Alive(state.Delegate), nil
+		return sameBoot && state.Delegate.Valid() && processes.Alive(state.Delegate), nil
 	default:
 		return false, nil
 	}
@@ -271,6 +283,9 @@ type ContainerdRuntimeStateChecker struct{}
 
 // Present retains delegation evidence until containerd no longer has the task.
 func (ContainerdRuntimeStateChecker) Present(ctx context.Context, state rootfsstate.State) (bool, error) {
+	if state.RuntimeProvider == crio.Provider {
+		return crioRuntimePresent(ctx, state)
+	}
 	namespace := state.RuntimeNamespace
 	if namespace == "" {
 		namespace = "k8s.io"
@@ -331,6 +346,22 @@ type NamespaceRecoveryCleaner struct {
 }
 
 func (c NamespaceRecoveryCleaner) Cleanup(ctx context.Context, state rootfsstate.State) error {
+	if state.RuntimeProvider == crio.Provider {
+		same, err := sameCRIOBoot(state)
+		if err != nil {
+			return err
+		}
+		if same {
+			if err := c.cleanupNamespace(ctx, state); err != nil {
+				return err
+			}
+		}
+		return crioStorage(state).Release(ctx, state.ContainerID)
+	}
+	return c.cleanupNamespace(ctx, state)
+}
+
+func (c NamespaceRecoveryCleaner) cleanupNamespace(ctx context.Context, state rootfsstate.State) error {
 	if state.MountNamespace == 0 {
 		return fmt.Errorf("mount_namespace_unknown: container=%s", state.ContainerID)
 	}

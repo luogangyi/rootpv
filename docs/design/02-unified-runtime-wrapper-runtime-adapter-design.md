@@ -1,5 +1,9 @@
 # RootPV 统一 Runtime Wrapper 与 Runtime Adapter 设计
 
+> **2026-11-16 更新：** [CRI-O 适配设计](07-cri-o-runtime-adapter-design.md) 增加独立的配置发现、
+> containers/storage 镜像来源和 CRI 状态恢复。下文 containerd 配置仍只适用于该后端；
+> 本分支 CRI-O 仅支持官方 CRI-O + conmon + runc，范围以新设计和验收记录为准。
+
 > **2026-10-20 更新：** 已增加 [gVisor runsc adapter](06-gvisor-runsc-runtime-adapter-design.md)。
 > io.containerd.runsc.v1 通过 shim TOML 的 binary_name 接入 OCI wrapper，生成配置关闭内部临时 overlay。
 > 下文关于旧实现拒绝 gVisor 的叙述保留历史语境；当前能力以新设计和兼容性矩阵为准。

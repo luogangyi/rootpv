@@ -3,6 +3,7 @@
 ## 部署与使用
 
 - [部署指南](user-guide/deployment.md)：构建镜像、Helm/渲染清单安装、路径配置、就绪和卸载。
+- [CRI-O 使用指南](user-guide/cri-o.md)：部署参数、存储保护、runtime 前提及当前验证边界。
 - [域名迁移指南](user-guide/domain-migration.md)：openfuyao.cn 协议键、替换脚本与已有安装升级。
 - [Kata + QEMU 使用指南](user-guide/kata-qemu.md)：运行时前提、完整测试 YAML、持久化重建与排障。
 - [Helm Chart 说明](../charts/rootpv/README.md)：安装参数、OCI/Kata 两条接入路径与验证命令。
@@ -18,6 +19,7 @@
 - [自动发现与 catalog 设计](design/03-configmap-driven-runtime-adapter-extension-design.md)：inventory、ID、路由、Shadow handler 和 readiness。
 - [Kata task shim 设计](design/05-kata-qemu-task-shim-adapter-design.md)：QEMU 接入、共享 sandbox 和写层生命周期。
 - [gVisor runsc adapter 设计](design/06-gvisor-runsc-runtime-adapter-design.md)：shim 配置克隆、写入透传与 gofer 清理。
+- [CRI-O 适配设计](design/07-cri-o-runtime-adapter-design.md)：官方 CRI-O + runc 的配置、存储引用、生命周期及验收范围。
 
 ## 兼容性与测试证据
 
@@ -33,5 +35,7 @@
 
 - [Ascend 910C 功能验收](../tests/e2e/results/ascend-910c-2026-11-11.md)：ARM64、NPU 实算、持久化、隔离和清理。
 - [Ascend 950DT 功能验收](../tests/e2e/results/ascend-950-2026-11-12.md)：厂商 udma 配置、8 个 NPU 实算、三代持久化、服务重启后计算及 Webhook/catalog。
+
+- [CRI-O 验收记录](../tests/e2e/results/cri-o-runc-2026-11-16.md)：官方 CRI-O + runc 的全流程及 containerd 回归，列出未覆盖项。
 
 设计中的实施目标不等于已验证能力；对外说明以兼容性矩阵和对应结果记录为准。

@@ -1,0 +1,103 @@
+# Preconditions: install RootPV with runtimeProvider=cri-o and verify native runc.
+# Replace rootpv-worker-1, create /var/lib/rootpv/crio-test-data on that node,
+# and wait for the generated Shadow RuntimeClass before applying the Pod.
+# This branch supports only native runc OCI handlers for CRI-O.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rootpv-test-crio
+  labels:
+    openfuyao.cn/rootpv-crio-test: "true"
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: crio-runc
+handler: runc
+scheduling:
+  nodeSelector:
+    kubernetes.io/hostname: rootpv-worker-1
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rootpv-test-crio-pv
+spec:
+  capacity:
+    storage: 1Gi
+  volumeMode: Filesystem
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: rootpv-local
+  claimRef:
+    namespace: rootpv-test-crio
+    name: rootfs-data
+  local:
+    path: /var/lib/rootpv/crio-test-data
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values: [rootpv-worker-1]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rootfs-data
+  namespace: rootpv-test-crio
+spec:
+  volumeName: rootpv-test-crio-pv
+  storageClassName: rootpv-local
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: crio-rootpv-test
+  namespace: rootpv-test-crio
+  annotations:
+    openfuyao.cn/persistent-rootfs: "true"
+    openfuyao.cn/rootfs-container: app
+    openfuyao.cn/rootfs-volume: rootfs-data
+    openfuyao.cn/rootfs-path: crio-test/app
+    openfuyao.cn/rootfs-base-image-policy: Strict
+spec:
+  runtimeClassName: crio-runc
+  restartPolicy: Always
+  terminationGracePeriodSeconds: 5
+  containers:
+  - name: app
+    image: alpine:3.19
+    workingDir: /rootpv-work
+    command:
+    - /bin/sh
+    - -ec
+    - |
+      if [ ! -f /rootpv.marker ]; then
+        printf 'persistent-rootfs\n' > /rootpv.marker
+      fi
+      count=$(cat /rootpv-start-count 2>/dev/null || echo 0)
+      count=$((count + 1))
+      printf '%s\n' "$count" > /rootpv-start-count
+      sync
+      echo "persistent-start-count=$count"
+      cat /rootpv.marker
+      while [ ! -f /tmp/rootpv-restart ]; do sleep 1; done
+      rm /tmp/rootpv-restart
+      exit 42
+    readinessProbe:
+      exec:
+        command: [/bin/sh, -ec, "test -s /rootpv.marker && test -s /rootpv-start-count"]
+      periodSeconds: 2
+  - name: sidecar
+    image: alpine:3.19
+    command: [/bin/sh, -ec, "test ! -e /rootpv.marker; echo isolated; exec sleep 86400"]
+  volumes:
+  - name: rootfs-data
+    persistentVolumeClaim:
+      claimName: rootfs-data

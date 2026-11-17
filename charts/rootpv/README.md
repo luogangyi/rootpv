@@ -1,8 +1,8 @@
 # RootPV Helm Chart
 
 该 Chart 部署 RootPV Controller、node-agent、OCI wrapper 和 Kata + QEMU task shim proxy，
-保留原生 containerd overlayfs。node-agent 在带标节点上自动生成 catalog 对应的 Shadow handler
-及 registry。镜像和 Chart 不安装 containerd、Kata、QEMU、guest kernel 或设备驱动。
+默认保留原生 containerd overlayfs；CRI-O + runc 后端使用 containers/storage overlay。node-agent 在带标节点上自动生成 catalog 对应的 Shadow handler
+及 registry。镜像和 Chart 不安装 containerd、CRI-O、Kata、QEMU、guest kernel 或设备驱动。
 
 ## 安装
 
@@ -34,6 +34,12 @@ rootpv-runtime-adapters.yaml 和 rootfs-runtime-wrapper.yaml。
 | image.repository / image.tag | Controller、agent 和 installer 的同一 RootPV 镜像 | rootpv / latest |
 | runtimeAdapterDiscovery.enabled | 自动发现源 handler 并生成 catalog、Shadow RuntimeClass 与节点 registry | true |
 | nodeAgent.nodeSelector | 选择安装 RootPV 的节点 | openfuyao.cn/persistent-rootfs=true |
+| nodeAgent.runtimeProvider | 节点 CRI 后端；可选 containerd / cri-o | containerd |
+| nodeAgent.crio.socket | CRI-O socket，必须匹配 kubelet endpoint | /var/run/crio/crio.sock |
+| nodeAgent.crio.configDir | RootPV 独立 drop-in 所在目录 | /etc/crio/crio.conf.d |
+| nodeAgent.crio.storageRoot / runRoot | CRI-O 实际 graphroot / runroot | /var/lib/containers/storage / /run/containers/storage |
+| nodeAgent.crio.sourceRoot | 可恢复的镜像引用记录 | /var/lib/rootpv/crio-sources |
+| nodeAgent.crio.restartCommand | 让新 shadow handler 生效的宿主 CRI-O 重启命令 | 见 values.yaml |
 | nodeAgent.overlayMode | 持久化 Overlay 模式；Kata 要求 flat-lowerdirs | flat-lowerdirs |
 | nodeAgent.kubeletRoot | shim 和 agent 使用的真实 kubelet 路径 | /var/lib/kubelet |
 | nodeAgent.hostPaths.kubelet | kubelet 宿主机目录挂载来源，应匹配 kubeletRoot | /var/lib/kubelet |
@@ -67,6 +73,16 @@ values.yaml 中 supportedRuntimeTypes 是当前类型清单；修改该列表不
 实际兼容性判断由 discovery 和 runtime adapter 代码执行。
 config.storagePolicy 当前渲染到 ConfigMap，但 Controller 没有读取该文件来强制执行类名准入；
 它不能替代对实际文件系统、PVC 模式和 OverlayFS 能力的验证。
+
+## CRI-O
+
+设置 nodeAgent.runtimeProvider=cri-o，并按 [CRI-O 指南](../../docs/user-guide/cri-o.md) 配置
+crio.socket、configDir、storageRoot、runRoot、sourceRoot 和 restartCommand。
+CRI-O storage helper 随镜像安装；镜像本身不安装 CRI-O，也不修改 kubelet endpoint。
+启用前必须关闭 internal_wipe/internal_repair，核对专用节点及 runtime 原生兼容性。
+默认 containerd 部署方式保持不变。混合集群必须用互不重叠的 nodeSelector 区分 agent。
+本分支仅接入官方 CRI-O + conmon + runc，不需要上游补丁；CRI-O VM 实验保留在独立分支。
+直接 YAML 需由同一份 CRI-O values 渲染，不能直接应用默认的 deploy/manifests。
 
 ## Kata + QEMU
 
