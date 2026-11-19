@@ -74,8 +74,83 @@ func TestDiscoverRuntimeInventoryFailsClosedWithoutVendorBinaryName(t *testing.T
 	if err != nil {
 		t.Fatalf("DiscoverRuntimeInventory: %v", err)
 	}
-	if len(inventory.Handlers) != 1 || inventory.Handlers[0].Resolved || inventory.Handlers[0].Reason != "delegate_unresolved" {
-		t.Fatalf("vendor handler must fail closed without BinaryName: %#v", inventory.Handlers)
+	if inventory.DefaultHandler != "runc" {
+		t.Fatalf("implicit containerd default must be reported: %#v", inventory)
+	}
+	var ascend config.DiscoveredRuntimeHandler
+	for _, handler := range inventory.Handlers {
+		if handler.Name == "ascend" {
+			ascend = handler
+		}
+	}
+	if ascend.Resolved || ascend.Reason != "delegate_unresolved" {
+		t.Fatalf("vendor handler must fail closed without BinaryName: %#v", ascend)
+	}
+}
+
+func TestDiscoverRuntimeInventoryFallsBackToImplicitRuncDefault(t *testing.T) {
+	root := t.TempDir()
+	writeExecutable(t, root, "usr/bin/runc")
+	writeExecutable(t, root, "usr/local/nvidia/toolkit/nvidia-container-runtime")
+	configPath := filepath.Join(root, "etc/containerd/config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// RKE2 渲染的配置：default_runtime_name 缺省，但显式声明了 runc handler。
+	if err := os.WriteFile(configPath, []byte(`
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc]
+  runtime_type = "io.containerd.runc.v2"
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.nvidia]
+  runtime_type = "io.containerd.runc.v2"
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.nvidia.options]
+  BinaryName = "/usr/local/nvidia/toolkit/nvidia-container-runtime"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	inventory, err := DiscoverRuntimeInventory(configPath, RuntimeDiscoveryOptions{NodeUID: "node-a", HostRoot: root})
+	if err != nil {
+		t.Fatalf("DiscoverRuntimeInventory: %v", err)
+	}
+	if inventory.DefaultHandler != "runc" {
+		t.Fatalf("implicit containerd default must be reported: %#v", inventory)
+	}
+	for _, handler := range inventory.Handlers {
+		if want := handler.Name == "runc"; handler.Default != want {
+			t.Fatalf("handler %q default flag = %v, want %v", handler.Name, handler.Default, want)
+		}
+	}
+	// 隐式默认必须能点亮 node-default 路由，否则无 runtimeClass 的 RootPV Pod 无法准入。
+	catalog, err := config.BuildRuntimeCatalog([]config.RuntimeInventory{inventory}, nil)
+	if err != nil {
+		t.Fatalf("BuildRuntimeCatalog: %v", err)
+	}
+	adapter, err := catalog.ResolveAdmissionAdapter("")
+	if err != nil || adapter.RootfsRuntimeClass != "persistent-rootfs-node-default" {
+		t.Fatalf("node-default route missing: adapter=%#v err=%v", adapter, err)
+	}
+}
+
+func TestDiscoverRuntimeInventorySynthesizesImplicitDefaultRuncWithoutRuntimeTable(t *testing.T) {
+	root := t.TempDir()
+	writeExecutable(t, root, "usr/bin/runc")
+	path := filepath.Join(root, "config.toml")
+	// 既无 default_runtime_name 也无 runtimes.runc：containerd 隐式 runc 默认。
+	if err := os.WriteFile(path, []byte(`
+[plugins.'io.containerd.grpc.v1.cri'.containerd]
+  snapshotter = "overlayfs"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inventory, err := DiscoverRuntimeInventory(path, RuntimeDiscoveryOptions{NodeUID: "node-a", HostRoot: root})
+	if err != nil {
+		t.Fatalf("DiscoverRuntimeInventory: %v", err)
+	}
+	if inventory.DefaultHandler != "runc" {
+		t.Fatalf("implicit default handler missing: %#v", inventory)
+	}
+	if len(inventory.Handlers) != 1 || inventory.Handlers[0].Name != "runc" || !inventory.Handlers[0].Resolved || !inventory.Handlers[0].Default {
+		t.Fatalf("implicit default runc must be synthesized: %#v", inventory.Handlers)
 	}
 }
 

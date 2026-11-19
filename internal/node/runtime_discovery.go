@@ -74,14 +74,31 @@ func discoverConfiguredHandlers(raw map[string]any, opts RuntimeDiscoveryOptions
 	}
 }
 
-// appendDefaultRuncHandler 兼容未显式声明 runtimes.runc 的标准 containerd 配置。
+// appendDefaultRuncHandler 对齐 containerd 的隐式 runc 语义：
+//   - default_runtime_name 缺省时（如 RKE2 渲染的配置不含该键），containerd
+//     实际回落 "runc" handler——inventory 必须按同一语义上报 DefaultHandler，
+//     否则 catalog 不会生成 node-default 路由，无 runtimeClass 的 RootPV Pod
+//     会被准入拒绝（runtime adapter route not found for runtimeClass ""）；
+//   - 未显式声明 runtimes.runc 的标准 containerd 配置同样补一条合成 handler。
 func appendDefaultRuncHandler(opts RuntimeDiscoveryOptions, inventory *config.RuntimeInventory) {
+	if inventory.DefaultHandler == "" {
+		inventory.DefaultHandler = "runc"
+		markDefaultHandler(inventory)
+	}
 	if inventory.DefaultHandler != "runc" || inventoryHasHandler(*inventory, "runc") {
 		return
 	}
 	handler := discoverHandler("runc", map[string]any{"runtime_type": config.RuncV2RuntimeType}, opts)
 	handler.Default = true
 	inventory.Handlers = append(inventory.Handlers, handler)
+}
+
+// markDefaultHandler 在 default_runtime_name 缺省回落后重算各 handler 的
+// Default 标记（发现循环是按回落前的值比较的）。
+func markDefaultHandler(inventory *config.RuntimeInventory) {
+	for i := range inventory.Handlers {
+		inventory.Handlers[i].Default = inventory.Handlers[i].Name == inventory.DefaultHandler
+	}
 }
 
 func inventoryHasHandler(inventory config.RuntimeInventory, name string) bool {
