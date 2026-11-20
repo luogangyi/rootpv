@@ -161,13 +161,20 @@ func TestDiscoverRuntimeInventorySynthesizesImplicitDefaultRuncWithoutRuntimeTab
 // 从 inventory、catalog、准入到节点 reconcile 的整条链路必须与显式 runc 默认
 // 同等对待，否则准入放行的 Pod 在节点上没有 shadow handler、无法启动。
 func TestImplicitDefaultRuncReconcilesWithoutCRIRuntimeTable(t *testing.T) {
-	for _, version := range []string{"2", "3"} {
-		t.Run("version "+version, func(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		plugin  string
+	}{
+		// containerd 1.x（v2 配置）只认 legacy 插件名；2.x 会迁移到新名。
+		{"2", "io.containerd.grpc.v1.cri"},
+		{"3", "io.containerd.cri.v1.runtime"},
+	} {
+		t.Run("version "+tc.version, func(t *testing.T) {
 			root := t.TempDir()
 			writeExecutable(t, root, "usr/bin/runc")
 			writeExecutable(t, root, "usr/local/bin/rootfs-runtime-wrapper")
 			configPath := filepath.Join(root, "etc/containerd/config.toml")
-			writeRuntimeConfigFile(t, configPath, []byte("version = "+version+"\n"))
+			writeRuntimeConfigFile(t, configPath, []byte("version = "+tc.version+"\n"))
 
 			inventory, err := DiscoverRuntimeInventory(configPath, RuntimeDiscoveryOptions{NodeUID: "node-a", HostRoot: root})
 			if err != nil {
@@ -201,12 +208,14 @@ func TestImplicitDefaultRuncReconcilesWithoutCRIRuntimeTable(t *testing.T) {
 			if result.Readiness["runc-v2"] == "" {
 				t.Fatalf("implicit default adapter is not ready: %#v", result)
 			}
-			// shadow handler 必须物化在规范 CRI runtime 插件下：containerd 对
-			// v2/v3 最小配置的隐式默认都由 io.containerd.cri.v1.runtime 提供。
-			runtimes := decodeRuntimeMap(t, configPath)
+			// shadow handler 必须物化在该 config 版本的守护进程实际服务的插件下：
+			// v3（containerd 2.x）只有 io.containerd.cri.v1.runtime；v2 在
+			// containerd 1.x 上由 legacy io.containerd.grpc.v1.cri 直接生效，
+			// 并被 containerd 2.x 迁移到新插件名。
+			runtimes := decodeRuntimeMapPlugin(t, configPath, tc.plugin)
 			shadow := mapValue(runtimes["persistent-rootfs-runc-v2"])
 			if stringValue(shadow["runtime_type"]) != config.RuncV2RuntimeType {
-				t.Fatalf("shadow handler was not installed: %#v", shadow)
+				t.Fatalf("shadow handler was not installed under %s: %#v", tc.plugin, shadow)
 			}
 			options := mapValue(shadow["options"])
 			if stringValue(options["BinaryName"]) != "/usr/local/bin/rootfs-runtime-wrapper-runc-v2" {
@@ -242,6 +251,61 @@ func TestImplicitDefaultRuncFailsClosedWithoutRuncBinary(t *testing.T) {
 	}
 	if _, err := catalog.ResolveAdmissionAdapter(""); err == nil {
 		t.Fatal("implicit default must not admit pods while runc is unresolved")
+	}
+}
+
+// 异构默认集群的既有聚合语义（appendDefaultRoute 仅在唯一默认时生成 node-default
+// 路由）：部分节点显式以其它 handler 为默认、部分节点缺省回落隐式 runc 时，
+// defaults 集合出现两个 handler，cluster-wide 的 "" 路由无法同时匹配两类节点，
+// 因此不生成路由（fail-closed，不做猜测路由），显式 RuntimeClass 路由不受影响。
+func TestHeterogeneousClusterDefaultsOmitNodeDefaultRoute(t *testing.T) {
+	root := t.TempDir()
+	writeExecutable(t, root, "usr/bin/runc")
+	writeExecutable(t, root, "usr/local/nvidia/toolkit/nvidia-container-runtime")
+	implicitPath := filepath.Join(root, "implicit.toml")
+	// 节点 A：default_runtime_name 缺省 → 隐式回落 runc 默认。
+	writeRuntimeConfigFile(t, implicitPath, []byte(`
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.nvidia]
+  runtime_type = "io.containerd.runc.v2"
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.nvidia.options]
+  BinaryName = "/usr/local/nvidia/toolkit/nvidia-container-runtime"
+`))
+	implicit, err := DiscoverRuntimeInventory(implicitPath, RuntimeDiscoveryOptions{NodeUID: "node-a", HostRoot: root})
+	if err != nil {
+		t.Fatalf("DiscoverRuntimeInventory: %v", err)
+	}
+	if implicit.DefaultHandler != "runc" {
+		t.Fatalf("implicit default handler missing: %#v", implicit)
+	}
+	explicitPath := filepath.Join(root, "explicit.toml")
+	// 节点 B：显式 nvidia 默认。
+	writeRuntimeConfigFile(t, explicitPath, []byte(`
+[plugins.'io.containerd.cri.v1.runtime'.containerd]
+  default_runtime_name = "nvidia"
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.nvidia]
+  runtime_type = "io.containerd.runc.v2"
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.nvidia.options]
+  BinaryName = "/usr/local/nvidia/toolkit/nvidia-container-runtime"
+`))
+	explicit, err := DiscoverRuntimeInventory(explicitPath, RuntimeDiscoveryOptions{NodeUID: "node-b", HostRoot: root})
+	if err != nil {
+		t.Fatalf("DiscoverRuntimeInventory: %v", err)
+	}
+	if explicit.DefaultHandler != "nvidia" {
+		t.Fatalf("explicit default handler missing: %#v", explicit)
+	}
+	catalog, err := config.BuildRuntimeCatalog(
+		[]config.RuntimeInventory{implicit, explicit},
+		[]config.RuntimeClassSource{{Name: "nvidia", Handler: "nvidia"}},
+	)
+	if err != nil {
+		t.Fatalf("BuildRuntimeCatalog: %v", err)
+	}
+	if _, err := catalog.ResolveAdmissionAdapter(""); err == nil {
+		t.Fatal("heterogeneous cluster defaults must not build a node-default route")
+	}
+	if _, err := catalog.ResolveAdmissionAdapter("nvidia"); err != nil {
+		t.Fatalf("explicit runtime class route must survive heterogeneous defaults: %v", err)
 	}
 }
 

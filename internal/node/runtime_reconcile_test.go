@@ -83,6 +83,12 @@ func prepareVendorRuntimeReconcileFixture(t *testing.T) vendorRuntimeReconcileFi
 }
 
 func decodeRuntimeMap(t *testing.T, configPath string) map[string]any {
+	return decodeRuntimeMapPlugin(t, configPath, "io.containerd.cri.v1.runtime")
+}
+
+// decodeRuntimeMapPlugin decodes the runtimes table of the given CRI runtime
+// plugin, including the legacy io.containerd.grpc.v1.cri used by config v2.
+func decodeRuntimeMapPlugin(t *testing.T, configPath, plugin string) map[string]any {
 	t.Helper()
 	var raw map[string]any
 	if _, err := toml.DecodeFile(configPath, &raw); err != nil {
@@ -92,7 +98,7 @@ func decodeRuntimeMap(t *testing.T, configPath string) map[string]any {
 	if !ok {
 		t.Fatal("containerd config is missing plugins")
 	}
-	criRuntime := mapValue(plugins)["io.containerd.cri.v1.runtime"]
+	criRuntime := mapValue(plugins)[plugin]
 	containerd := mapValue(criRuntime)["containerd"]
 	runtimes := mapValue(containerd)["runtimes"]
 	return mapValue(runtimes)
