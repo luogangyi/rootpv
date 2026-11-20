@@ -124,14 +124,7 @@ func TestDiscoverRuntimeInventoryFallsBackToImplicitRuncDefault(t *testing.T) {
 		}
 	}
 	// 隐式默认必须能点亮 node-default 路由，否则无 runtimeClass 的 RootPV Pod 无法准入。
-	catalog, err := config.BuildRuntimeCatalog([]config.RuntimeInventory{inventory}, nil)
-	if err != nil {
-		t.Fatalf("BuildRuntimeCatalog: %v", err)
-	}
-	adapter, err := catalog.ResolveAdmissionAdapter("")
-	if err != nil || adapter.RootfsRuntimeClass != "persistent-rootfs-node-default" {
-		t.Fatalf("node-default route missing: adapter=%#v err=%v", adapter, err)
-	}
+	catalogWithNodeDefaultRoute(t, inventory)
 }
 
 func TestDiscoverRuntimeInventorySynthesizesImplicitDefaultRuncWithoutRuntimeTable(t *testing.T) {
@@ -160,6 +153,7 @@ func TestDiscoverRuntimeInventorySynthesizesImplicitDefaultRuncWithoutRuntimeTab
 // 仅含 version 的最小配置是 containerd 接受的有效配置：CRI 以隐式 runc 默认运行。
 // 从 inventory、catalog、准入到节点 reconcile 的整条链路必须与显式 runc 默认
 // 同等对待，否则准入放行的 Pod 在节点上没有 shadow handler、无法启动。
+// 各阶段断言拆分为下方独立的 helper，避免单个函数承担整条链路的复杂度。
 func TestImplicitDefaultRuncReconcilesWithoutCRIRuntimeTable(t *testing.T) {
 	for _, tc := range []struct {
 		version string
@@ -170,62 +164,96 @@ func TestImplicitDefaultRuncReconcilesWithoutCRIRuntimeTable(t *testing.T) {
 		{"3", "io.containerd.cri.v1.runtime"},
 	} {
 		t.Run("version "+tc.version, func(t *testing.T) {
-			root := t.TempDir()
-			writeExecutable(t, root, "usr/bin/runc")
-			writeExecutable(t, root, "usr/local/bin/rootfs-runtime-wrapper")
-			configPath := filepath.Join(root, "etc/containerd/config.toml")
-			writeRuntimeConfigFile(t, configPath, []byte("version = "+tc.version+"\n"))
-
-			inventory, err := DiscoverRuntimeInventory(configPath, RuntimeDiscoveryOptions{NodeUID: "node-a", HostRoot: root})
-			if err != nil {
-				t.Fatalf("DiscoverRuntimeInventory: %v", err)
-			}
-			if inventory.DefaultHandler != "runc" || len(inventory.Handlers) != 1 {
-				t.Fatalf("implicit default must be reported: %#v", inventory)
-			}
-			handler := inventory.Handlers[0]
-			if handler.Name != "runc" || !handler.Default || !handler.Resolved || handler.AdapterID != "runc-v2" {
-				t.Fatalf("implicit default runc handler: %#v", handler)
-			}
-			catalog, err := config.BuildRuntimeCatalog([]config.RuntimeInventory{inventory}, nil)
-			if err != nil {
-				t.Fatalf("BuildRuntimeCatalog: %v", err)
-			}
-			adapter, err := catalog.ResolveAdmissionAdapter("")
-			if err != nil || adapter.RootfsRuntimeClass != "persistent-rootfs-node-default" {
-				t.Fatalf("node-default route missing: adapter=%#v err=%v", adapter, err)
-			}
-			result, err := ReconcileRuntimeAdapters(configPath, catalog, RuntimeReconcileOptions{
-				HostRoot:      root,
-				WrapperBinary: "/usr/local/bin/rootfs-runtime-wrapper",
-				RegistryPath:  filepath.Join(root, "etc/rootpv/registry.yaml"),
-			})
-			if err != nil {
-				t.Fatalf("ReconcileRuntimeAdapters: %v", err)
-			}
-			// 只有准入路由而没有节点 readiness 时，被放行的 Pod 仍无法启动：
-			// shadow handler 必须真正落盘并发布就绪状态。
-			if result.Readiness["runc-v2"] == "" {
-				t.Fatalf("implicit default adapter is not ready: %#v", result)
-			}
-			// shadow handler 必须物化在该 config 版本的守护进程实际服务的插件下：
-			// v3（containerd 2.x）只有 io.containerd.cri.v1.runtime；v2 在
-			// containerd 1.x 上由 legacy io.containerd.grpc.v1.cri 直接生效，
-			// 并被 containerd 2.x 迁移到新插件名。
-			runtimes := decodeRuntimeMapPlugin(t, configPath, tc.plugin)
-			shadow := mapValue(runtimes["persistent-rootfs-runc-v2"])
-			if stringValue(shadow["runtime_type"]) != config.RuncV2RuntimeType {
-				t.Fatalf("shadow handler was not installed under %s: %#v", tc.plugin, shadow)
-			}
-			options := mapValue(shadow["options"])
-			if stringValue(options["BinaryName"]) != "/usr/local/bin/rootfs-runtime-wrapper-runc-v2" {
-				t.Fatalf("shadow handler delegate: %#v", options)
-			}
-			alias := filepath.Join(root, "usr/local/bin/rootfs-runtime-wrapper-runc-v2")
-			if target, err := os.Readlink(alias); err != nil || target != "rootfs-runtime-wrapper" {
-				t.Fatalf("generated wrapper alias: target=%q err=%v", target, err)
-			}
+			root, configPath := setupVersionOnlyContainerdConfig(t, tc.version)
+			inventory := discoverImplicitDefaultRunc(t, configPath, root)
+			catalog := catalogWithNodeDefaultRoute(t, inventory)
+			reconcileImplicitDefaultRunc(t, configPath, root, catalog)
+			assertImplicitRuncShadowHandler(t, configPath, root, tc.plugin)
 		})
+	}
+}
+
+// setupVersionOnlyContainerdConfig 写出仅含 version 的最小 containerd 配置，
+// 并准备隐式 runc 默认所需的 runc 与 RootPV wrapper 可执行文件。
+func setupVersionOnlyContainerdConfig(t *testing.T, version string) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	writeExecutable(t, root, "usr/bin/runc")
+	writeExecutable(t, root, "usr/local/bin/rootfs-runtime-wrapper")
+	configPath := filepath.Join(root, "etc/containerd/config.toml")
+	writeRuntimeConfigFile(t, configPath, []byte("version = "+version+"\n"))
+	return root, configPath
+}
+
+// discoverImplicitDefaultRunc 断言最小配置按 containerd 隐式语义上报唯一的
+// runc 默认 handler，并返回 inventory 供后续 catalog 链路复用。
+func discoverImplicitDefaultRunc(t *testing.T, configPath, root string) config.RuntimeInventory {
+	t.Helper()
+	inventory, err := DiscoverRuntimeInventory(configPath, RuntimeDiscoveryOptions{NodeUID: "node-a", HostRoot: root})
+	if err != nil {
+		t.Fatalf("DiscoverRuntimeInventory: %v", err)
+	}
+	if inventory.DefaultHandler != "runc" || len(inventory.Handlers) != 1 {
+		t.Fatalf("implicit default must be reported: %#v", inventory)
+	}
+	handler := inventory.Handlers[0]
+	if handler.Name != "runc" || !handler.Default || !handler.Resolved || handler.AdapterID != "runc-v2" {
+		t.Fatalf("implicit default runc handler: %#v", handler)
+	}
+	return inventory
+}
+
+// catalogWithNodeDefaultRoute 断言隐式默认能点亮 node-default 准入路由
+// （无 runtimeClass 的 RootPV Pod 依赖该路由通过准入），并返回 catalog。
+func catalogWithNodeDefaultRoute(t *testing.T, inventory config.RuntimeInventory) config.RuntimeCatalog {
+	t.Helper()
+	catalog, err := config.BuildRuntimeCatalog([]config.RuntimeInventory{inventory}, nil)
+	if err != nil {
+		t.Fatalf("BuildRuntimeCatalog: %v", err)
+	}
+	adapter, err := catalog.ResolveAdmissionAdapter("")
+	if err != nil || adapter.RootfsRuntimeClass != "persistent-rootfs-node-default" {
+		t.Fatalf("node-default route missing: adapter=%#v err=%v", adapter, err)
+	}
+	return catalog
+}
+
+// reconcileImplicitDefaultRunc 断言隐式默认 adapter 完成节点 reconcile：
+// 只有准入路由而没有节点 readiness 时，被放行的 Pod 仍无法启动——
+// shadow handler 必须真正落盘并发布就绪状态。
+func reconcileImplicitDefaultRunc(t *testing.T, configPath, root string, catalog config.RuntimeCatalog) {
+	t.Helper()
+	result, err := ReconcileRuntimeAdapters(configPath, catalog, RuntimeReconcileOptions{
+		HostRoot:      root,
+		WrapperBinary: "/usr/local/bin/rootfs-runtime-wrapper",
+		RegistryPath:  filepath.Join(root, "etc/rootpv/registry.yaml"),
+	})
+	if err != nil {
+		t.Fatalf("ReconcileRuntimeAdapters: %v", err)
+	}
+	if result.Readiness["runc-v2"] == "" {
+		t.Fatalf("implicit default adapter is not ready: %#v", result)
+	}
+}
+
+// assertImplicitRuncShadowHandler 断言 shadow handler 物化在该 config 版本的
+// 守护进程实际服务的插件下：v3（containerd 2.x）只有
+// io.containerd.cri.v1.runtime；v2 在 containerd 1.x 上由 legacy
+// io.containerd.grpc.v1.cri 直接生效，并被 containerd 2.x 迁移到新插件名。
+func assertImplicitRuncShadowHandler(t *testing.T, configPath, root, plugin string) {
+	t.Helper()
+	runtimes := decodeRuntimeMapPlugin(t, configPath, plugin)
+	shadow := mapValue(runtimes["persistent-rootfs-runc-v2"])
+	if stringValue(shadow["runtime_type"]) != config.RuncV2RuntimeType {
+		t.Fatalf("shadow handler was not installed under %s: %#v", plugin, shadow)
+	}
+	options := mapValue(shadow["options"])
+	if stringValue(options["BinaryName"]) != "/usr/local/bin/rootfs-runtime-wrapper-runc-v2" {
+		t.Fatalf("shadow handler delegate: %#v", options)
+	}
+	alias := filepath.Join(root, "usr/local/bin/rootfs-runtime-wrapper-runc-v2")
+	if target, err := os.Readlink(alias); err != nil || target != "rootfs-runtime-wrapper" {
+		t.Fatalf("generated wrapper alias: target=%q err=%v", target, err)
 	}
 }
 
