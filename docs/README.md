@@ -3,6 +3,7 @@
 ## 部署与使用
 
 - [部署指南](user-guide/deployment.md)：构建镜像、Helm/渲染清单安装、路径配置、就绪和卸载。
+- [OpenKruise Agents 使用指南](user-guide/openkruise-agents.md)：每 Sandbox 独立系统盘、Stop/SDK 生命周期配置，以及 runc/Kata/gVisor 功能和故障验证结果。
 - [CRI-O 使用指南](user-guide/cri-o.md)：部署参数、存储保护、runtime 前提及当前验证边界。
 - [域名迁移指南](user-guide/domain-migration.md)：openfuyao.cn 协议键、替换脚本与已有安装升级。
 - [Kata + QEMU 使用指南](user-guide/kata-qemu.md)：运行时前提、完整测试 YAML、持久化重建与排障。
