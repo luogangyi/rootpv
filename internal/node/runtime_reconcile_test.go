@@ -91,9 +91,8 @@ func decodeRuntimeMap(t *testing.T, configPath string) map[string]any {
 func decodeRuntimeMapPlugin(t *testing.T, configPath, plugin string) map[string]any {
 	t.Helper()
 	var raw map[string]any
-	if _, err := toml.DecodeFile(configPath, &raw); err != nil {
-		t.Fatal(err)
-	}
+	_, err := toml.DecodeFile(configPath, &raw)
+	requireNoError(t, err, "decode containerd config")
 	plugins, ok := raw["plugins"]
 	if !ok {
 		t.Fatal("containerd config is missing plugins")

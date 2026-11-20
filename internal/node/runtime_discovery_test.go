@@ -67,16 +67,12 @@ func TestDiscoverRuntimeInventoryFailsClosedWithoutVendorBinaryName(t *testing.T
 	// 宿主机是否安装 runc 变化，inventory 保持可复现。
 	root := t.TempDir()
 	path := filepath.Join(root, "config.toml")
-	if err := os.WriteFile(path, []byte(`
+	writeRuntimeConfigFile(t, path, []byte(`
 [plugins.'io.containerd.grpc.v1.cri'.containerd.runtimes.ascend]
   runtime_type = "io.containerd.runc.v2"
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+`))
 	inventory, err := DiscoverRuntimeInventory(path, RuntimeDiscoveryOptions{NodeUID: "node-a", HostRoot: root})
-	if err != nil {
-		t.Fatalf("DiscoverRuntimeInventory: %v", err)
-	}
+	requireNoError(t, err, "DiscoverRuntimeInventory")
 	if inventory.DefaultHandler != "runc" {
 		t.Fatalf("implicit containerd default must be reported: %#v", inventory)
 	}
@@ -96,25 +92,18 @@ func TestDiscoverRuntimeInventoryFallsBackToImplicitRuncDefault(t *testing.T) {
 	writeExecutable(t, root, "usr/bin/runc")
 	writeExecutable(t, root, "usr/local/nvidia/toolkit/nvidia-container-runtime")
 	configPath := filepath.Join(root, "etc/containerd/config.toml")
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	// RKE2 渲染的配置：default_runtime_name 缺省，但显式声明了 runc handler。
-	if err := os.WriteFile(configPath, []byte(`
+	writeRuntimeConfigFile(t, configPath, []byte(`
 [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc]
   runtime_type = "io.containerd.runc.v2"
 [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.nvidia]
   runtime_type = "io.containerd.runc.v2"
 [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.nvidia.options]
   BinaryName = "/usr/local/nvidia/toolkit/nvidia-container-runtime"
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+`))
 
 	inventory, err := DiscoverRuntimeInventory(configPath, RuntimeDiscoveryOptions{NodeUID: "node-a", HostRoot: root})
-	if err != nil {
-		t.Fatalf("DiscoverRuntimeInventory: %v", err)
-	}
+	requireNoError(t, err, "DiscoverRuntimeInventory")
 	if inventory.DefaultHandler != "runc" {
 		t.Fatalf("implicit containerd default must be reported: %#v", inventory)
 	}
@@ -132,21 +121,21 @@ func TestDiscoverRuntimeInventorySynthesizesImplicitDefaultRuncWithoutRuntimeTab
 	writeExecutable(t, root, "usr/bin/runc")
 	path := filepath.Join(root, "config.toml")
 	// 既无 default_runtime_name 也无 runtimes.runc：containerd 隐式 runc 默认。
-	if err := os.WriteFile(path, []byte(`
+	writeRuntimeConfigFile(t, path, []byte(`
 [plugins.'io.containerd.grpc.v1.cri'.containerd]
   snapshotter = "overlayfs"
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+`))
 	inventory, err := DiscoverRuntimeInventory(path, RuntimeDiscoveryOptions{NodeUID: "node-a", HostRoot: root})
-	if err != nil {
-		t.Fatalf("DiscoverRuntimeInventory: %v", err)
-	}
+	requireNoError(t, err, "DiscoverRuntimeInventory")
 	if inventory.DefaultHandler != "runc" {
 		t.Fatalf("implicit default handler missing: %#v", inventory)
 	}
-	if len(inventory.Handlers) != 1 || inventory.Handlers[0].Name != "runc" || !inventory.Handlers[0].Resolved || !inventory.Handlers[0].Default {
+	if len(inventory.Handlers) != 1 {
 		t.Fatalf("implicit default runc must be synthesized: %#v", inventory.Handlers)
+	}
+	handler := inventory.Handlers[0]
+	if handler.Name != "runc" || !handler.Resolved || !handler.Default {
+		t.Fatalf("implicit default runc must be synthesized: %#v", handler)
 	}
 }
 
@@ -190,9 +179,7 @@ func setupVersionOnlyContainerdConfig(t *testing.T, version string) (string, str
 func discoverImplicitDefaultRunc(t *testing.T, configPath, root string) config.RuntimeInventory {
 	t.Helper()
 	inventory, err := DiscoverRuntimeInventory(configPath, RuntimeDiscoveryOptions{NodeUID: "node-a", HostRoot: root})
-	if err != nil {
-		t.Fatalf("DiscoverRuntimeInventory: %v", err)
-	}
+	requireNoError(t, err, "DiscoverRuntimeInventory")
 	if inventory.DefaultHandler != "runc" || len(inventory.Handlers) != 1 {
 		t.Fatalf("implicit default must be reported: %#v", inventory)
 	}
@@ -208,12 +195,11 @@ func discoverImplicitDefaultRunc(t *testing.T, configPath, root string) config.R
 func catalogWithNodeDefaultRoute(t *testing.T, inventory config.RuntimeInventory) config.RuntimeCatalog {
 	t.Helper()
 	catalog, err := config.BuildRuntimeCatalog([]config.RuntimeInventory{inventory}, nil)
-	if err != nil {
-		t.Fatalf("BuildRuntimeCatalog: %v", err)
-	}
+	requireNoError(t, err, "BuildRuntimeCatalog")
 	adapter, err := catalog.ResolveAdmissionAdapter("")
-	if err != nil || adapter.RootfsRuntimeClass != "persistent-rootfs-node-default" {
-		t.Fatalf("node-default route missing: adapter=%#v err=%v", adapter, err)
+	requireNoError(t, err, "ResolveAdmissionAdapter")
+	if adapter.RootfsRuntimeClass != "persistent-rootfs-node-default" {
+		t.Fatalf("node-default route missing: adapter=%#v", adapter)
 	}
 	return catalog
 }
@@ -228,9 +214,7 @@ func reconcileImplicitDefaultRunc(t *testing.T, configPath, root string, catalog
 		WrapperBinary: "/usr/local/bin/rootfs-runtime-wrapper",
 		RegistryPath:  filepath.Join(root, "etc/rootpv/registry.yaml"),
 	})
-	if err != nil {
-		t.Fatalf("ReconcileRuntimeAdapters: %v", err)
-	}
+	requireNoError(t, err, "ReconcileRuntimeAdapters")
 	if result.Readiness["runc-v2"] == "" {
 		t.Fatalf("implicit default adapter is not ready: %#v", result)
 	}
@@ -264,19 +248,16 @@ func TestImplicitDefaultRuncFailsClosedWithoutRuncBinary(t *testing.T) {
 	configPath := filepath.Join(root, "config.toml")
 	writeRuntimeConfigFile(t, configPath, []byte("version = 3\n"))
 	inventory, err := DiscoverRuntimeInventory(configPath, RuntimeDiscoveryOptions{NodeUID: "node-a", HostRoot: root})
-	if err != nil {
-		t.Fatalf("DiscoverRuntimeInventory: %v", err)
-	}
+	requireNoError(t, err, "DiscoverRuntimeInventory")
 	if inventory.DefaultHandler != "runc" || len(inventory.Handlers) != 1 {
 		t.Fatalf("implicit default inventory: %#v", inventory)
 	}
-	if handler := inventory.Handlers[0]; handler.Name != "runc" || handler.Resolved || handler.Reason != "delegate_unresolved" {
+	handler := inventory.Handlers[0]
+	if handler.Name != "runc" || handler.Resolved || handler.Reason != "delegate_unresolved" {
 		t.Fatalf("implicit default must fail closed without a runc binary: %#v", handler)
 	}
 	catalog, err := config.BuildRuntimeCatalog([]config.RuntimeInventory{inventory}, nil)
-	if err != nil {
-		t.Fatalf("BuildRuntimeCatalog: %v", err)
-	}
+	requireNoError(t, err, "BuildRuntimeCatalog")
 	if _, err := catalog.ResolveAdmissionAdapter(""); err == nil {
 		t.Fatal("implicit default must not admit pods while runc is unresolved")
 	}
@@ -299,9 +280,7 @@ func TestHeterogeneousClusterDefaultsOmitNodeDefaultRoute(t *testing.T) {
   BinaryName = "/usr/local/nvidia/toolkit/nvidia-container-runtime"
 `))
 	implicit, err := DiscoverRuntimeInventory(implicitPath, RuntimeDiscoveryOptions{NodeUID: "node-a", HostRoot: root})
-	if err != nil {
-		t.Fatalf("DiscoverRuntimeInventory: %v", err)
-	}
+	requireNoError(t, err, "DiscoverRuntimeInventory")
 	if implicit.DefaultHandler != "runc" {
 		t.Fatalf("implicit default handler missing: %#v", implicit)
 	}
@@ -316,9 +295,7 @@ func TestHeterogeneousClusterDefaultsOmitNodeDefaultRoute(t *testing.T) {
   BinaryName = "/usr/local/nvidia/toolkit/nvidia-container-runtime"
 `))
 	explicit, err := DiscoverRuntimeInventory(explicitPath, RuntimeDiscoveryOptions{NodeUID: "node-b", HostRoot: root})
-	if err != nil {
-		t.Fatalf("DiscoverRuntimeInventory: %v", err)
-	}
+	requireNoError(t, err, "DiscoverRuntimeInventory")
 	if explicit.DefaultHandler != "nvidia" {
 		t.Fatalf("explicit default handler missing: %#v", explicit)
 	}
@@ -326,9 +303,7 @@ func TestHeterogeneousClusterDefaultsOmitNodeDefaultRoute(t *testing.T) {
 		[]config.RuntimeInventory{implicit, explicit},
 		[]config.RuntimeClassSource{{Name: "nvidia", Handler: "nvidia"}},
 	)
-	if err != nil {
-		t.Fatalf("BuildRuntimeCatalog: %v", err)
-	}
+	requireNoError(t, err, "BuildRuntimeCatalog")
 	if _, err := catalog.ResolveAdmissionAdapter(""); err == nil {
 		t.Fatal("heterogeneous cluster defaults must not build a node-default route")
 	}
@@ -408,14 +383,18 @@ imports = ["/etc/containerd/kata.toml"]
 	return root, configPath, imported
 }
 
+// requireNoError 统一各用例重复的错误检查分支，降低测试代码的圈复杂度。
+func requireNoError(t *testing.T, err error, context string) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("%s: %v", context, err)
+	}
+}
+
 func writeRuntimeConfigFile(t *testing.T, path string, content []byte) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, content, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, os.MkdirAll(filepath.Dir(path), 0o755), "create config directory")
+	requireNoError(t, os.WriteFile(path, content, 0o644), "write runtime config")
 }
 
 func TestKataQemuDiscoveryAndReconcileImportedRuntime(t *testing.T) {
