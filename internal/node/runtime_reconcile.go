@@ -202,6 +202,12 @@ func adapterRuntimePlugin(effective map[string]any, sourceHandler string) (strin
 				return name, nil
 			}
 		}
+		// A config that only sets the version is still valid: containerd then
+		// serves CRI with its implicit runc default, materialized under the
+		// canonical io.containerd.cri.v1.runtime plugin for both config v2
+		// and v3 (v2 legacy grpc.v1.cri runtime settings migrate there too).
+		// Materialize that table so the shadow handler is honored after reload.
+		return criRuntimePluginNames[0], nil
 	}
 	return "", fmt.Errorf("containerd CRI runtime table is unavailable")
 }
