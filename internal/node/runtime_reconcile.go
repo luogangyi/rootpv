@@ -204,14 +204,9 @@ func adapterRuntimePlugin(effective map[string]any, sourceHandler string) (strin
 		}
 		// A config that only sets the version is still valid: containerd then
 		// serves CRI with its implicit runc default. Materialize the table
-		// under a plugin the daemon actually serves: config v3 (containerd
-		// 2.x) only honors io.containerd.cri.v1.runtime, while config v2 is
-		// served by the legacy io.containerd.grpc.v1.cri on containerd 1.x
-		// and migrated to the new plugin name by containerd 2.x.
-		if effective["version"] == int64(3) {
-			return criRuntimePluginNames[0], nil
-		}
-		return criRuntimePluginNames[1], nil
+		// under a plugin the daemon actually serves for that config version
+		// (see criRuntimePluginForVersion).
+		return criRuntimePluginForVersion(effective)
 	}
 	return "", fmt.Errorf("containerd CRI runtime table is unavailable")
 }

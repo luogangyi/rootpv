@@ -15,6 +15,7 @@ package node
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -260,6 +261,28 @@ func TestImplicitDefaultRuncFailsClosedWithoutRuncBinary(t *testing.T) {
 	requireNoError(t, err, "BuildRuntimeCatalog")
 	if _, err := catalog.ResolveAdmissionAdapter(""); err == nil {
 		t.Fatal("implicit default must not admit pods while runc is unresolved")
+	}
+}
+
+// 未知 config 版本必须显式失败而非静默套用既有插件名：否则 shadow handler
+// 会落到守护进程不服务的插件下，重演「已准入 Pod 无法启动」的故障。
+func TestImplicitDefaultRuncRejectsUnknownConfigVersion(t *testing.T) {
+	root := t.TempDir()
+	writeExecutable(t, root, "usr/bin/runc")
+	writeExecutable(t, root, "usr/local/bin/rootfs-runtime-wrapper")
+	configPath := filepath.Join(root, "config.toml")
+	writeRuntimeConfigFile(t, configPath, []byte("version = 4\n"))
+	inventory, err := DiscoverRuntimeInventory(configPath, RuntimeDiscoveryOptions{NodeUID: "node-a", HostRoot: root})
+	requireNoError(t, err, "DiscoverRuntimeInventory")
+	catalog, err := config.BuildRuntimeCatalog([]config.RuntimeInventory{inventory}, nil)
+	requireNoError(t, err, "BuildRuntimeCatalog")
+	_, err = ReconcileRuntimeAdapters(configPath, catalog, RuntimeReconcileOptions{
+		HostRoot:      root,
+		WrapperBinary: "/usr/local/bin/rootfs-runtime-wrapper",
+		RegistryPath:  filepath.Join(root, "etc/rootpv/registry.yaml"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported containerd config version") {
+		t.Fatalf("unknown config version must fail closed: err=%v", err)
 	}
 }
 

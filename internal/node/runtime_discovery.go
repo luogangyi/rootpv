@@ -26,7 +26,16 @@ import (
 
 const runtimeInventoryVersion = "rootpv-runtime-inventory-v1"
 
-var criRuntimePluginNames = [...]string{"io.containerd.cri.v1.runtime", "io.containerd.grpc.v1.cri"}
+const (
+	// criRuntimePluginV3 是 config v3(containerd 2.x)唯一认可的 CRI runtime 插件。
+	criRuntimePluginV3 = "io.containerd.cri.v1.runtime"
+	// criRuntimePluginV2 是在 containerd 1.x 上服务 config v2 的 legacy 插件；
+	// containerd 2.x 会把其中的 runtime 设置迁移到 criRuntimePluginV3 名下。
+	criRuntimePluginV2 = "io.containerd.grpc.v1.cri"
+)
+
+// criRuntimePluginNames 按发现顺序列出 CRI runtime 插件：先规范 v3 插件，再 legacy v2 插件。
+var criRuntimePluginNames = [...]string{criRuntimePluginV3, criRuntimePluginV2}
 
 type RuntimeDiscoveryOptions struct {
 	NodeUID               string
@@ -219,10 +228,29 @@ func activeCRIRuntimePlugins(raw map[string]any) []string {
 	// need explicit migration review; do not assume v3 semantics with >= 3.
 	// Version 3 does not migrate the legacy io.containerd.grpc.v1.cri
 	// runtime settings. Leave them on disk, but never discover their handlers.
-	if raw["version"] == int64(3) {
+	plugin, err := criRuntimePluginForVersion(raw)
+	if err == nil && plugin == criRuntimePluginV3 {
 		return criRuntimePluginNames[:1]
 	}
 	return criRuntimePluginNames[:]
+}
+
+// criRuntimePluginForVersion 返回该 config 版本的守护进程为隐式（无 CRI
+// runtime 表）运行时配置实际服务的插件名。未知或未来版本显式报错而非静默
+// 套用已知插件名——否则 shadow handler 会落到守护进程不服务的插件下，
+// 重演「已准入 Pod 无法启动」的故障。
+func criRuntimePluginForVersion(raw map[string]any) (string, error) {
+	switch version := raw["version"]; version {
+	case int64(3):
+		return criRuntimePluginV3, nil
+	case nil, int64(1), int64(2):
+		// 未声明版本与 v3 之前的配置（config v1 本身不受支持，仅保留历史
+		// 映射）在 containerd 1.x 上由 legacy 插件服务，并被 containerd 2.x
+		// 迁移到 v3 插件名。
+		return criRuntimePluginV2, nil
+	default:
+		return "", fmt.Errorf("unsupported containerd config version %v", version)
+	}
 }
 
 func mapValue(value any) map[string]any {
