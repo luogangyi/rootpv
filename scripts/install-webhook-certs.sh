@@ -35,7 +35,8 @@ DNS.3 = ${service}.${namespace}.svc
 DNS.4 = ${service}.${namespace}.svc.cluster.local
 EOF
 
-openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+# Match the Helm chart's default certificate lifetime (10 years).
+openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
   -keyout "$tmpdir/tls.key" \
   -out "$tmpdir/tls.crt" \
   -config "$tmpdir/openssl.cnf"

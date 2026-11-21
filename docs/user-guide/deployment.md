@@ -119,7 +119,7 @@ kubectl apply -f "$ROOTPV_MANIFESTS/10-rbac.yaml" -f "$ROOTPV_MANIFESTS/20-confi
 
 ROOTPV_TLS_DIR=$(mktemp -d)
 chmod 700 "$ROOTPV_TLS_DIR"
-openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
   -keyout "$ROOTPV_TLS_DIR/tls.key" -out "$ROOTPV_TLS_DIR/tls.crt" \
   -subj /CN=persistent-rootfs-webhook.rootpv-system.svc \
   -addext 'subjectAltName=DNS:persistent-rootfs-webhook.rootpv-system.svc,DNS:persistent-rootfs-webhook.rootpv-system.svc.cluster.local'
@@ -140,6 +140,9 @@ kubectl apply -f "$ROOTPV_MANIFESTS/60-webhook.yaml"
 
 后续使用这份已配置镜像和 CA 的副本执行 `kubectl apply -f "$ROOTPV_MANIFESTS"`。
 不要重新应用仓库中的占位 CA；更换证书时同步更新 Secret、caBundle 并重启 Controller。
+此处和 `scripts/install-webhook-certs.sh` 新生成的证书有效期为 3650 天（约 10 年），
+与 Helm Chart 的默认值一致。已有证书的到期时间不会因升级脚本而改变，需重新签发并按上述步骤更新。
+当前未提供自动续期，仍需在证书到期前完成轮换。
 Ascend 的源 handler、源 RuntimeClass、驱动/runtime/plugin 仍须预先安装，见 [Ascend 指南](ascend.md)。
 业务 Pod 显式使用 `runtimeClassName: ascend`；资源名本身不会触发 Ascend 路由。
 
