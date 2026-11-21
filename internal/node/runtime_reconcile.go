@@ -202,6 +202,11 @@ func adapterRuntimePlugin(effective map[string]any, sourceHandler string) (strin
 				return name, nil
 			}
 		}
+		// A config that only sets the version is still valid: containerd then
+		// serves CRI with its implicit runc default. Materialize the table
+		// under a plugin the daemon actually serves for that config version
+		// (see criRuntimePluginForVersion).
+		return criRuntimePluginForVersion(effective)
 	}
 	return "", fmt.Errorf("containerd CRI runtime table is unavailable")
 }
